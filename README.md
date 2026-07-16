@@ -113,4 +113,6 @@ kubectl get applications -n argocd
 # pantry-infra  Synced  Healthy
 ```
 
-Live URL: https://pantry.example.com/pantry/
+The app lands at `https://<cluster-host>/pantry/` — the dev cluster runs on
+demand (stopped when idle, $0 compute); ArgoCD self-heals the whole stack back
+within minutes of `az aks start`.

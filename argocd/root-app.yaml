@@ -1,0 +1,37 @@
+# Root Application — the App-of-Apps seed.
+#
+# This is the ONLY resource that isn't applied by ArgoCD itself. It's
+# created once by pantry-infra's Terraform (or by hand:
+# `kubectl apply -f argocd/root-app.yaml`). It points at this argocd/
+# directory, which contains the AppProject + the child Applications;
+# ArgoCD recursively creates everything else from git.
+#
+# Adding a new component to the platform = add an Application file
+# here, push, done.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pantry-root
+  namespace: argocd
+  finalizers:
+    # Cascade deletion: removing the root cleans up everything downstream.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # The root lives in the built-in default project; everything it
+  # creates is scoped down to the `pantry` AppProject (project.yaml).
+  project: default
+  source:
+    repoURL: https://github.com/pjvjay/pantry-gitops.git
+    targetRevision: main
+    path: argocd
+    directory:
+      recurse: false
+      # No self-reference loop.
+      exclude: "root-app.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true      # delete resources removed from git
+      selfHeal: true   # revert manual cluster changes

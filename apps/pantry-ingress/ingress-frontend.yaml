@@ -1,0 +1,35 @@
+# Frontend ingress — serves the SPA under /pantry and owns the TLS
+# declaration for this app's cert.
+#
+# The host is the shared cluster hostname (one public IP / DNS label,
+# many apps behind path prefixes). cert-manager provisions pantry-tls
+# in THIS namespace — the neighbouring lifeguide app's cert can't be
+# referenced across namespaces.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pantry-frontend
+  namespace: pantry-app
+  labels:
+    app.kubernetes.io/part-of: pantry-platform
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # HTTP must stay reachable for the ACME HTTP-01 challenge.
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - lifeguide-dev-67c717e5.canadacentral.cloudapp.azure.com
+      secretName: pantry-tls
+  rules:
+    - host: lifeguide-dev-67c717e5.canadacentral.cloudapp.azure.com
+      http:
+        paths:
+          - path: /pantry
+            pathType: Prefix
+            backend:
+              service:
+                name: pantry-frontend
+                port:
+                  number: 80

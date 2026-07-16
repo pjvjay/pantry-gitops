@@ -1,0 +1,43 @@
+# CNPG Cluster — the pantry database.
+#
+# The CloudNativePG operator (installed cluster-wide by lifeguide-infra)
+# sees this CRD and provisions the StatefulSet, PVC, Services, and
+# certs. The demo runs a single small instance with the STOCK CNPG
+# Postgres 17 image (multi-arch, no custom extensions needed here).
+#
+# Consumers connect to the read-write Service CNPG creates:
+#   pantry-rw.pantry-db.svc.cluster.local:5432
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pantry
+  namespace: pantry-db
+  annotations:
+    # After the ExternalSecrets (wave -10): bootstrap reads the
+    # pantry-app-credentials Secret during initdb.
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  instances: 1
+
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.5
+
+  bootstrap:
+    initdb:
+      database: pantry
+      owner: pantry_app
+      # Username + password come from the ESO-projected Secret; the
+      # password's single source of truth is Azure Key Vault.
+      secret:
+        name: pantry-app-credentials
+
+  storage:
+    size: 2Gi
+    storageClass: managed-csi
+
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m

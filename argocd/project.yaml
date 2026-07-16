@@ -1,0 +1,29 @@
+# AppProject — scopes everything the pantry demo may do in the cluster.
+#
+# GitOps best practice: don't run demo apps in the `default` project.
+# This project pins WHICH repo can deploy (only this one), WHERE it can
+# deploy (only the two pantry namespaces + the argocd namespace for the
+# child Applications), and WHAT cluster-scoped resources it may touch
+# (only Namespaces).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: pantry
+  namespace: argocd
+  annotations:
+    # Must exist before the child Applications that reference it.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: pantry-platform GitOps demo
+  sourceRepos:
+    - https://github.com/pjvjay/pantry-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: pantry-app
+    - server: https://kubernetes.default.svc
+      namespace: pantry-db
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace

@@ -1,0 +1,34 @@
+# API ingress — strips the /pantry/api prefix before forwarding.
+#
+# Separate Ingress object from the frontend's because the
+# rewrite-target annotation applies to every rule in an Ingress, and
+# only the API path needs rewriting.
+#
+#   /pantry/api/health  → pantry-api:8000/health
+#   /pantry/api/recipes → pantry-api:8000/recipes
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pantry-api
+  namespace: pantry-app
+  labels:
+    app.kubernetes.io/part-of: pantry-platform
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # /plan waits on LLM calls — don't buffer, don't time out early.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "180"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: lifeguide-dev-67c717e5.canadacentral.cloudapp.azure.com
+      http:
+        paths:
+          - path: /pantry/api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: pantry-api
+                port:
+                  number: 8000

@@ -1,0 +1,55 @@
+# Database migration Job — ArgoCD PreSync hook.
+#
+# Runs pantry-db's migration image BEFORE the app workloads roll on
+# every sync: pending migrations apply once, the seed file re-applies
+# idempotently. If this Job fails, the sync stops — the API never
+# ships against a schema it doesn't expect.
+#
+# BeforeHookCreation: each sync deletes the previous Job object and
+# creates a fresh one (Jobs are immutable once created).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pantry-db-migrate
+  namespace: pantry-app
+  labels:
+    app.kubernetes.io/part-of: pantry-platform
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: pantry-db-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          # Tag managed by Kustomize `images` in apps/kustomization.yaml.
+          image: ghcr.io/pjvjay/pantry-db-migrate
+          env:
+            - name: DB_HOST
+              value: pantry-rw.pantry-db.svc.cluster.local
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: pantry
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pantry-app-credentials
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pantry-app-credentials
+                  key: password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

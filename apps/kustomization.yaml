@@ -1,0 +1,21 @@
+# The Kustomize root ArgoCD renders for the pantry-apps Application.
+#
+# The `images` block is the single place image tags live. Each app
+# repo's CI runs `kustomize edit set image <name>=<name>:dev-<sha>`
+# here and pushes — that commit IS the deployment.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pantry-app
+resources:
+- migrate-job.yaml
+- pantry-api
+- pantry-frontend
+- pantry-ingress
+images:
+- name: ghcr.io/pjvjay/pantry-api
+  newName: ghcr.io/pjvjay/pantry-api
+  newTag: latest
+- name: ghcr.io/pjvjay/pantry-db-migrate
+  newTag: latest
+- name: ghcr.io/pjvjay/pantry-frontend
+  newTag: latest

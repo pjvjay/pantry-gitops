@@ -1,0 +1,36 @@
+# Child Application: infra-adjacent resources — namespaces, the CNPG
+# Postgres Cluster, and the ExternalSecrets that project Key Vault
+# entries into the pantry namespaces.
+#
+# Split from apps/ because these change on a different cadence (rarely)
+# and must sync earlier (see the sync-wave annotations inside).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pantry-infra
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: pantry
+  source:
+    repoURL: https://github.com/pjvjay/pantry-gitops.git
+    targetRevision: main
+    path: infra
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pantry-db
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

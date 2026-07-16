@@ -1,0 +1,34 @@
+# DB password projected into pantry-db. CNPG's bootstrap.initdb.secret
+# reads username + password from this Secret to create the pantry_app
+# role on first init.
+#
+# The Key Vault entry `pantry-db-password` is created by pantry-infra's
+# Terraform (random_password → azurerm_key_vault_secret). No secret
+# value ever lives in this repo.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: pantry-app-credentials
+  namespace: pantry-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    # ClusterSecretStore provisioned by lifeguide-infra — shared plumbing
+    # for every project on this cluster (ESO + Workload Identity → KV).
+    name: azure-key-vault
+    kind: ClusterSecretStore
+  target:
+    name: pantry-app-credentials
+    template:
+      # basic-auth type with username + password keys = what CNPG expects.
+      type: kubernetes.io/basic-auth
+      engineVersion: v2
+      data:
+        username: pantry_app
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef:
+        key: pantry-db-password

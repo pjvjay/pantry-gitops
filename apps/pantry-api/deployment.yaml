@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pantry-api
+  namespace: pantry-app
+  labels:
+    app: pantry-api
+    app.kubernetes.io/part-of: pantry-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pantry-api
+  template:
+    metadata:
+      labels:
+        app: pantry-api
+    spec:
+      containers:
+        - name: api
+          # Tag is managed by Kustomize `images` in apps/kustomization.yaml —
+          # CI pipelines bump it there, never here.
+          image: ghcr.io/pjvjay/pantry-api
+          # Override the Dockerfile CMD to set --root-path so the OpenAPI
+          # docs render correctly behind the /pantry/api ingress rewrite.
+          command:
+            - uvicorn
+            - pantry_planner.api:app
+            - --host=0.0.0.0
+            - --port=8000
+            - --root-path=/pantry/api
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            # DB_URL is unset on purpose — the app composes a Postgres URL
+            # from these parts (see pantry_planner/config.py).
+            - name: DB_HOST
+              value: pantry-rw.pantry-db.svc.cluster.local
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: pantry
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pantry-app-credentials
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pantry-app-credentials
+                  key: password
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-credentials
+                  key: api_key
+            - name: ROUTING_STRATEGY
+              value: cascade
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 512Mi

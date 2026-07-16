@@ -1,0 +1,30 @@
+# Same DB password, projected into pantry-app for the API Deployment
+# and the migration Job.
+#
+# K8s Secrets can't be referenced across namespaces — this second
+# ExternalSecret is the clean answer: one source of truth (Key Vault),
+# two projections.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: pantry-app-credentials
+  namespace: pantry-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: azure-key-vault
+    kind: ClusterSecretStore
+  target:
+    name: pantry-app-credentials
+    template:
+      type: kubernetes.io/basic-auth
+      engineVersion: v2
+      data:
+        username: pantry_app
+        password: "{{ .password }}"
+  data:
+    - secretKey: password
+      remoteRef:
+        key: pantry-db-password

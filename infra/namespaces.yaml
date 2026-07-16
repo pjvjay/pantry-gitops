@@ -1,0 +1,18 @@
+# Both pantry namespaces, applied before anything that lives in them.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pantry-app
+  labels:
+    app.kubernetes.io/part-of: pantry-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "-15"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pantry-db
+  labels:
+    app.kubernetes.io/part-of: pantry-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "-15"

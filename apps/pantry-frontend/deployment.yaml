@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pantry-frontend
+  namespace: pantry-app
+  labels:
+    app: pantry-frontend
+    app.kubernetes.io/part-of: pantry-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pantry-frontend
+  template:
+    metadata:
+      labels:
+        app: pantry-frontend
+    spec:
+      containers:
+        - name: frontend
+          # Tag managed by Kustomize `images` in apps/kustomization.yaml.
+          image: ghcr.io/pjvjay/pantry-frontend
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

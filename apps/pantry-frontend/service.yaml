@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pantry-frontend
+  namespace: pantry-app
+  labels:
+    app: pantry-frontend
+    app.kubernetes.io/part-of: pantry-platform
+spec:
+  type: ClusterIP
+  selector:
+    app: pantry-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

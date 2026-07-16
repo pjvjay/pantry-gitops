@@ -1,0 +1,35 @@
+# Child Application: the app workloads (API, frontend, ingress,
+# migration Job). Watches apps/ — a Kustomize tree, so the CI pipelines
+# in pantry-api / pantry-frontend / pantry-db can bump image tags with
+# `kustomize edit set image`.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pantry-apps
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: pantry
+  source:
+    repoURL: https://github.com/pjvjay/pantry-gitops.git
+    targetRevision: main
+    path: apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pantry-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      # The PreSync migration Job needs Postgres up — on a cold cluster
+      # the first attempts can fail while CNPG initializes. Back off and
+      # retry instead of wedging the sync.
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

@@ -15,8 +15,8 @@ metadata:
 spec:
   refreshInterval: 1h
   secretStoreRef:
-    # ClusterSecretStore provisioned by lifeguide-infra — shared plumbing
-    # for every project on this cluster (ESO + Workload Identity → KV).
+    # The cluster's ESO ClusterSecretStore (a platform prerequisite:
+    # External Secrets Operator + Workload Identity → Key Vault).
     name: azure-key-vault
     kind: ClusterSecretStore
   target:

@@ -1,6 +1,6 @@
 # CNPG Cluster — the pantry database.
 #
-# The CloudNativePG operator (installed cluster-wide by lifeguide-infra)
+# The CloudNativePG operator (a cluster platform prerequisite)
 # sees this CRD and provisions the StatefulSet, PVC, Services, and
 # certs. The demo runs a single small instance with the STOCK CNPG
 # Postgres 17 image (multi-arch, no custom extensions needed here).

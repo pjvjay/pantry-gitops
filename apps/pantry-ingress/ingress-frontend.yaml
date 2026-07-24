@@ -1,9 +1,9 @@
 # Frontend ingress — serves the SPA under /pantry and owns the TLS
 # declaration for this app's cert.
 #
-# The host is the shared cluster hostname (one public IP / DNS label,
-# many apps behind path prefixes). cert-manager provisions pantry-tls
-# in THIS namespace — the neighbouring lifeguide app's cert can't be
+# The host is the cluster's shared ingress hostname (one public IP /
+# DNS name, apps behind path prefixes). cert-manager provisions
+# pantry-tls in THIS namespace — Ingress TLS secrets can't be
 # referenced across namespaces.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -20,10 +20,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - lifeguide-dev-67c717e5.canadacentral.cloudapp.azure.com
+        - pantry.example.com  # CHANGE ME: your cluster ingress host
       secretName: pantry-tls
   rules:
-    - host: lifeguide-dev-67c717e5.canadacentral.cloudapp.azure.com
+    - host: pantry.example.com  # CHANGE ME: your cluster ingress host
       http:
         paths:
           - path: /pantry

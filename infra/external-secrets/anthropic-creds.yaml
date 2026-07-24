@@ -1,6 +1,6 @@
-# Anthropic API key for the /plan endpoint, projected into pantry-app.
-# Reuses the same Key Vault entry the LifeGuide app uses — rotate once
-# in KV, every consumer picks it up within refreshInterval.
+# Anthropic API key for the /plan endpoints, projected into pantry-app.
+# References the `anthropic-api-key` entry in the cluster's Key Vault —
+# rotate once in KV, every consumer picks it up within refreshInterval.
 apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:

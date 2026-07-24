@@ -90,10 +90,11 @@ on the next sync, before the app rolls.
 
 ## Bootstrap (once per cluster)
 
-Prereqs on the cluster (provisioned by
-[lifeguide-infra](https://github.com/pjvjay/lifeguide-infra) on this AKS):
-ArgoCD, ingress-nginx, cert-manager, CloudNativePG operator, External
-Secrets Operator with a `ClusterSecretStore` named `azure-key-vault`.
+Platform prerequisites on the target cluster (any cluster satisfying this
+contract works): ArgoCD, ingress-nginx, cert-manager (`ClusterIssuer`
+`letsencrypt-prod`), CloudNativePG operator, and External Secrets Operator
+with a `ClusterSecretStore` named `azure-key-vault`. Set your ingress
+hostname in `apps/pantry-ingress/` (placeholder `pantry.example.com`).
 
 ```bash
 # Option A — Terraform (preferred): pantry-infra applies the root app + KV secret

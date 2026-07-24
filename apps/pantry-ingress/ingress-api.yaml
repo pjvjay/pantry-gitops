@@ -22,7 +22,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: lifeguide-dev-67c717e5.canadacentral.cloudapp.azure.com
+    - host: pantry.example.com  # CHANGE ME: your cluster ingress host
       http:
         paths:
           - path: /pantry/api(/|$)(.*)

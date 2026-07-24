@@ -22,7 +22,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: pantry.example.com
+    - host: pantry.example.com  # CHANGE ME: your cluster ingress host
       http:
         paths:
           - path: /pantry/api(/|$)(.*)

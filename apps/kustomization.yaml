@@ -20,4 +20,4 @@ images:
   newTag: dev-ae2b783
 - name: ghcr.io/pjvjay/pantry-frontend
   newName: ghcr.io/pjvjay/pantry-frontend
-  newTag: dev-378af1f
+  newTag: dev-43f677b

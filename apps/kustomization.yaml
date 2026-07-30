@@ -14,7 +14,7 @@ resources:
 images:
 - name: ghcr.io/pjvjay/pantry-api
   newName: ghcr.io/pjvjay/pantry-api
-  newTag: dev-b16e14d
+  newTag: dev-ea64744
 - name: ghcr.io/pjvjay/pantry-db-migrate
   newName: ghcr.io/pjvjay/pantry-db-migrate
   newTag: dev-4d8f2a9

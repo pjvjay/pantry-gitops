@@ -17,7 +17,7 @@ images:
   newTag: dev-ea64744
 - name: ghcr.io/pjvjay/pantry-db-migrate
   newName: ghcr.io/pjvjay/pantry-db-migrate
-  newTag: dev-4d8f2a9
+  newTag: dev-5cc0d11
 - name: ghcr.io/pjvjay/pantry-frontend
   newName: ghcr.io/pjvjay/pantry-frontend
   newTag: dev-455fa3f

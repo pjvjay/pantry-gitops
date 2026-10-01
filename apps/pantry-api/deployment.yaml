@@ -56,6 +56,15 @@ spec:
                 secretKeyRef:
                   name: anthropic-credentials
                   key: api_key
+            # Optional so a cluster without the `pantry-mcp-tokens` Key Vault
+            # entry still rolls — the API then serves /mcp anonymously with
+            # the origin-submission (write) tools disabled.
+            - name: MCP_AUTH_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: pantry-mcp-credentials
+                  key: tokens
+                  optional: true
             - name: ROUTING_STRATEGY
               value: cascade
           readinessProbe:

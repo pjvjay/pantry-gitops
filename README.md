@@ -63,11 +63,21 @@ No secret values exist in this repo — only *references*:
 Azure Key Vault ──(External Secrets Operator + Workload Identity)──▶ K8s Secrets
    pantry-db-password   → pantry-app-credentials   (pantry-db + pantry-app ns)
    anthropic-api-key    → anthropic-credentials    (pantry-app ns)
+   pantry-mcp-tokens    → pantry-mcp-credentials   (pantry-app ns)
 ```
 
 Rotate in Key Vault; ESO re-syncs within 1h (or force with an annotation).
-The `pantry-db-password` entry is created by
+The `pantry-db-password` and `pantry-mcp-tokens` entries are created by
 [pantry-infra](https://github.com/pjvjay/pantry-infra)'s Terraform.
+
+`pantry-mcp-tokens` holds the bearer tokens for the API's `/mcp` endpoint
+as `label:secret[,label:secret]`; the api Deployment reads it as
+`MCP_AUTH_TOKENS` with `optional: true`, so a cluster without the entry
+still rolls (anonymous `/mcp`, submission tools disabled). To point an MCP
+client at the cluster, read the secret part of an entry from Key Vault
+(`az keyvault secret show --vault-name <kv> --name pantry-mcp-tokens
+--query value -o tsv | cut -d: -f2`) and pass it as
+`--header "Authorization: Bearer <secret>"` to `claude mcp add`.
 
 ## Common operations
 

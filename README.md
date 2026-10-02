@@ -63,11 +63,29 @@ No secret values exist in this repo — only *references*:
 Azure Key Vault ──(External Secrets Operator + Workload Identity)──▶ K8s Secrets
    pantry-db-password   → pantry-app-credentials   (pantry-db + pantry-app ns)
    anthropic-api-key    → anthropic-credentials    (pantry-app ns)
+   pantry-mcp-tokens    → pantry-mcp-credentials   (pantry-app ns)
 ```
 
 Rotate in Key Vault; ESO re-syncs within 1h (or force with an annotation).
-The `pantry-db-password` entry is created by
+The `pantry-db-password` and `pantry-mcp-tokens` entries are created by
 [pantry-infra](https://github.com/pjvjay/pantry-infra)'s Terraform.
+
+`pantry-mcp-tokens` holds the bearer tokens for the API's `/mcp` endpoint
+as `label:secret[,label:secret]`; the api Deployment reads it as
+`MCP_AUTH_TOKENS` with `optional: true`, so the API Deployment still rolls
+on a cluster without the entry (anonymous `/mcp`, submission tools
+disabled) — but the `pantry-mcp-credentials` ExternalSecret itself reports
+Degraded until the entry exists, so run pantry-infra's Terraform first.
+`MCP_AUTH_TOKENS` is an environment variable: a value created or rotated
+after the api pod started takes effect only after
+`kubectl rollout restart deployment/pantry-api -n pantry-app`. To point an
+MCP client at the cluster, pick ONE entry by label and pass its secret as
+`--header "Authorization: Bearer <secret>"` to `claude mcp add`:
+
+```bash
+az keyvault secret show --vault-name <kv> --name pantry-mcp-tokens \
+  --query value -o tsv | tr ',' '\n' | awk -F: '$1=="terraform"{print $2}'
+```
 
 ## Common operations
 

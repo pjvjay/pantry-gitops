@@ -1,0 +1,38 @@
+# Bearer tokens for the pantry-api MCP endpoint (/mcp), projected into
+# pantry-app as MCP_AUTH_TOKENS.
+#
+# The Key Vault value is `label:secret[,label:secret]` — one or more
+# comma-separated entries, each a short label (shown as submitter /
+# reviewer on origin submissions) and a secret of at least 16 chars,
+# e.g. `terraform:Xk9...`. pantry-infra's Terraform creates the
+# `pantry-mcp-tokens` entry; rotate it there, wait for the re-sync, then
+# roll the api Deployment — the value is an env var fixed at pod start.
+#
+# The API Deployment reads the resulting Secret as `optional: true`, so
+# the Deployment still rolls on a cluster without this Key Vault entry
+# (/mcp anonymous, submission tools disabled). This ExternalSecret,
+# however, reports Degraded until the entry exists, which holds the
+# pantry-infra Application at this sync wave: apply pantry-infra first.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: pantry-mcp-credentials
+  namespace: pantry-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: azure-key-vault
+    kind: ClusterSecretStore
+  target:
+    name: pantry-mcp-credentials
+    template:
+      type: Opaque
+      engineVersion: v2
+      data:
+        tokens: "{{ .tokens }}"
+  data:
+    - secretKey: tokens
+      remoteRef:
+        key: pantry-mcp-tokens

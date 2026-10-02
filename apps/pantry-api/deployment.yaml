@@ -56,9 +56,11 @@ spec:
                 secretKeyRef:
                   name: anthropic-credentials
                   key: api_key
-            # Optional so a cluster without the `pantry-mcp-tokens` Key Vault
-            # entry still rolls — the API then serves /mcp anonymously with
-            # the origin-submission (write) tools disabled.
+            # Optional so this Deployment still rolls on a cluster without the
+            # `pantry-mcp-tokens` Key Vault entry — the API then serves /mcp
+            # anonymously with the origin-submission (write) tools disabled.
+            # Env values are fixed at pod start: after the entry is created or
+            # rotated, `kubectl rollout restart deployment/pantry-api`.
             - name: MCP_AUTH_TOKENS
               valueFrom:
                 secretKeyRef:

@@ -110,9 +110,11 @@ ArgoCD rolls the Deployment.
 git revert HEAD && git push   # ArgoCD converges back within ~3 min
 ```
 
-Or dispatch the app repo's `build.yml` with `promote_version: X.Y.Z` to
-deploy an earlier release again without a rebuild. Tags never move; the fix
-ships as the next version.
+Or dispatch the app repo's `build.yml` from `main` with
+`promote_version: X.Y.Z`, `rollback` ticked and `dry_run` unticked (it is
+ticked by default), to deploy an earlier release again without a rebuild.
+Without `rollback`, the deploy job refuses to move this repo to an older
+version than it runs. Tags never move; the fix ships as the next version.
 
 **Add a schema migration** — merge a numbered SQL file to
 [pantry-db](https://github.com/pjvjay/pantry-db); its release sets the

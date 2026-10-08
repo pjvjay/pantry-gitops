@@ -1,0 +1,47 @@
+# ============================================================
+# pantry-gitops — verification
+#
+# A commit here is a deployment: Argo CD converges the cluster to
+# whatever main says. So every PR and every push to main (the app repos'
+# deploy commits land straight on main) checks two things:
+#
+#   tests   the scripts the app repos' deploy jobs run against this
+#           repo (bump_image_tag.py) and check_images.py itself
+#   images  `kubectl kustomize apps` renders, and every image it
+#           deploys is pinned: a version, a dev-<sha> tag or a digest,
+#           never latest and never untagged (scripts/check_images.py)
+#
+# Read-only. kubectl is preinstalled on the runner; kustomize is built
+# into it, so nothing is downloaded.
+# ============================================================
+
+name: verify
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Script tests
+        run: python3 -m unittest discover -s scripts -v
+
+      - name: Every deployed image is pinned, none is latest
+        run: |
+          kubectl kustomize apps > "$RUNNER_TEMP/apps.yaml"
+          python3 scripts/check_images.py --rendered "$RUNNER_TEMP/apps.yaml"

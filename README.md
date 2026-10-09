@@ -9,10 +9,10 @@ is the only deployment mechanism.
 
 ```mermaid
 flowchart LR
-    dev["git push<br/>(api / frontend / db repo)"]
-    ci["GitHub Actions<br/>test → build → push"]
-    ghcr[("GHCR<br/>ghcr.io/pjvjay/*")]
-    bump["CI: kustomize edit set image<br/>→ commit to THIS repo"]
+    dev["merge a labelled PR<br/>(api / frontend / db repo)"]
+    ci["GitHub Actions<br/>plan vX.Y.Z → test → build<br/>→ tag → Release"]
+    ghcr[("GHCR<br/>ghcr.io/pjvjay/*<br/>X.Y.Z, dev-sha")]
+    bump["CI: bump_image_tag.py X.Y.Z<br/>→ commit to THIS repo"]
     argo["ArgoCD<br/>app-of-apps"]
     aks["AKS cluster"]
 
@@ -20,6 +20,12 @@ flowchart LR
     ci --> bump --> argo -->|"reconcile"| aks
     aks -.->|"image pull"| ghcr
 ```
+
+Each app repo's `build.yml` releases a version on merge and sets it here
+(`newTag: X.Y.Z`; `bump_image_tag.py --digest` can pin
+`digest: sha256:... # X.Y.Z` instead). The process, the release labels and
+the platform release train are in
+[RELEASING.md](https://github.com/pjvjay/pantry-platform/blob/main/RELEASING.md).
 
 ## Layout
 
@@ -31,7 +37,7 @@ argocd/                     App-of-Apps control plane
 └── infra-application.yaml  child app → infra/ (directory, recursive)
 
 apps/                       Workloads — synced by pantry-apps
-├── kustomization.yaml      ← image tags live HERE; CI bumps them
+├── kustomization.yaml      ← image pins live HERE; CI sets them
 ├── migrate-job.yaml        PreSync hook: pantry-db migrations before rollout
 ├── pantry-api/             Deployment (:8000) + Service
 ├── pantry-frontend/        Deployment (nginx :80) + Service
@@ -41,6 +47,10 @@ infra/                      Slow-changing platform pieces — synced by pantry-i
 ├── namespaces.yaml         pantry-app + pantry-db
 ├── postgres-cluster.yaml   CNPG Cluster (Postgres 17, 1 instance)
 └── external-secrets/       Key Vault ⇄ K8s projections (no secret values in git)
+
+scripts/                    stdlib Python; tests: python3 -m unittest discover -s scripts
+├── bump_image_tag.py       the app repos' deploy step: one pin, newTag or --digest
+└── check_images.py         every rendered image pinned, none latest (verify.yml)
 ```
 
 ## Sync ordering
@@ -89,22 +99,31 @@ az keyvault secret show --vault-name <kv> --name pantry-mcp-tokens \
 
 ## Common operations
 
-**Deploy a new API version** — you don't. Push to
-[pantry-api](https://github.com/pjvjay/pantry-api); its CI bumps
-`apps/kustomization.yaml` here and ArgoCD rolls the Deployment.
+**Deploy a new API version** — you don't. Merge a labelled PR to
+[pantry-api](https://github.com/pjvjay/pantry-api); its `build.yml` releases
+vX.Y.Z, commits "Deploy pantry-api X.Y.Z (pjvjay/pantry-api@<sha>)" here and
+ArgoCD rolls the Deployment.
 
-**Roll back** — revert the bump commit:
+**Roll back** — revert the deploy commit:
 
 ```bash
 git revert HEAD && git push   # ArgoCD converges back within ~3 min
 ```
 
-**Add a schema migration** — push a numbered SQL file to
-[pantry-db](https://github.com/pjvjay/pantry-db); the PreSync Job applies it
-on the next sync, before the app rolls.
+Or dispatch the app repo's `build.yml` from `main` with
+`promote_version: X.Y.Z`, `rollback` ticked and `dry_run` unticked (it is
+ticked by default), to deploy an earlier release again without a rebuild.
+Without `rollback`, the deploy job refuses to move this repo to an older
+version than it runs. Tags never move; the fix ships as the next version.
+
+**Add a schema migration** — merge a numbered SQL file to
+[pantry-db](https://github.com/pjvjay/pantry-db); its release sets the
+migrate image here and the PreSync Job applies it on the next sync, before
+the app rolls.
 
 **Add a whole new service** — new directory under `apps/` + entry in
-`apps/kustomization.yaml`. No ArgoCD changes needed.
+`apps/kustomization.yaml`, pinned by a tag or digest (verify.yml refuses
+`latest` or no tag). No ArgoCD changes needed.
 
 ## Bootstrap (once per cluster)
 

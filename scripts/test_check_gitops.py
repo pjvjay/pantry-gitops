@@ -253,6 +253,16 @@ class TestCheckGitops(unittest.TestCase):
                   "kind: RoleBinding\nmetadata:\n  name: pantry-prod-approver")
         self.assertCaught("check_rbac", "no write verbs")
 
+    def test_oncall_gaining_update_is_caught(self):
+        self.edit("hub/kargo/rbac.yaml", "    resources: [freights, promotions, stages, warehouses]\n    verbs: [patch]",
+                  "    resources: [freights, promotions, stages, warehouses]\n    verbs: [patch, update]")
+        self.assertCaught("check_rbac", "no write verbs")
+
+    def test_oncall_patching_pipeline_config_is_caught(self):
+        self.edit("hub/kargo/rbac.yaml", "resources: [freights, promotions, stages, warehouses]",
+                  "resources: [freights, promotions, stages, warehouses, projectconfigs]")
+        self.assertCaught("check_rbac", "only for Pantry.Oncall")
+
     def test_patch_for_a_non_oncall_role_is_caught(self):
         self.edit("hub/kargo/rbac.yaml", "    resourceNames: [dev, staging]\n    verbs: [promote]",
                   "    resourceNames: [dev, staging]\n    verbs: [promote, patch]")

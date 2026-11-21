@@ -11,9 +11,19 @@
 #   Pantry.Promoter      + promote to dev and staging
 #   Pantry.ProdApprover  + promote to prod (the PR merge on stage/prod is
 #                          the second, independent prod gate)
+#   Pantry.Oncall        + OPERATE the pipeline: refresh a Warehouse or
+#                          Stage, re-run verification, abort a stuck
+#                          Promotion, set Freight aliases. Kargo implements
+#                          all of these as annotation patches, hence `patch`
+#                          only. PIM-activated for the on-call shift.
+#                          Grants NO promotion rights; on-call engineers
+#                          also hold Promoter / ProdApprover
+#                          (docs/runbooks/oncall.md).
 #
 # Nobody gets create/update/delete on pipeline objects: the pipeline
 # changes only by PR to hub/kargo/ (Argo CD selfHeal reverts hand edits).
+# check_gitops.py allows `patch` only for Pantry.Oncall, on exactly the
+# four resources below.
 # Kargo system admins (`Kargo.Admin`) are configured in the Kargo Helm
 # values by pantry-infra, not here.
 apiVersion: v1
@@ -22,7 +32,7 @@ metadata:
   name: pantry-viewer
   namespace: pantry
   annotations:
-    rbac.kargo.akuity.io/claim.roles: Pantry.Viewer,Pantry.Promoter,Pantry.ProdApprover
+    rbac.kargo.akuity.io/claim.roles: Pantry.Viewer,Pantry.Promoter,Pantry.ProdApprover,Pantry.Oncall
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -119,4 +129,36 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: pantry-prod-approver
+    namespace: pantry
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pantry-oncall
+  namespace: pantry
+  annotations:
+    rbac.kargo.akuity.io/claim.roles: Pantry.Oncall
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pantry-oncall
+  namespace: pantry
+rules:
+  - apiGroups: [kargo.akuity.io]
+    resources: [freights, promotions, stages, warehouses]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pantry-oncall
+  namespace: pantry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pantry-oncall
+subjects:
+  - kind: ServiceAccount
+    name: pantry-oncall
     namespace: pantry

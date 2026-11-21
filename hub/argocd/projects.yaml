@@ -137,6 +137,8 @@ spec:
       kind: Stage
     - group: kargo.akuity.io
       kind: PromotionTask
+    - group: argoproj.io
+      kind: AnalysisTemplate
     - group: ""
       kind: ServiceAccount
     - group: rbac.authorization.k8s.io

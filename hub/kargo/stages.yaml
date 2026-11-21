@@ -2,7 +2,11 @@
 #
 # A Stage only accepts Freight from its `sources`. `stages: [x]` means
 # "Freight that was promoted to x and verified there". Verified = the
-# stage's Argo CD Applications reached the promoted commit and are Healthy.
+# stage's Argo CD Applications reached the promoted commit and are Healthy
+# AND every AnalysisTemplate under `verification` passed
+# (hub/kargo/analysis-templates.yaml).
+#
+# `host` args must equal stages/<stage>/params (checked in CI).
 #
 # Each Stage syncs Argo CD Applications pantry-{infra,apps}-<stage>, which
 # carry `kargo.akuity.io/authorized-stage: pantry:<stage>` (ADR 0005).
@@ -23,6 +27,12 @@ spec:
       steps:
         - task:
             name: render-and-push
+  verification:
+    analysisTemplates:
+      - name: pantry-smoke
+    args:
+      - name: host
+        value: dev.pantry.example.com
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
@@ -47,6 +57,14 @@ spec:
       steps:
         - task:
             name: render-and-push
+  # Staging is the gate in front of prod: smoke AND the API contract.
+  verification:
+    analysisTemplates:
+      - name: pantry-smoke
+      - name: pantry-api-contract
+    args:
+      - name: host
+        value: staging.pantry.example.com
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
@@ -62,8 +80,20 @@ spec:
         # Only Freight proven in staging. Never direct.
         stages:
           - staging
+        # ...and that has been running in staging for at least this long
+        # (KARGO-21). Catches slow failures (leaks, cron paths, token
+        # expiry) that a single verification run can't.
+        requiredSoakTime: 1h
   promotionTemplate:
     spec:
       steps:
         - task:
             name: render-and-pr
+  # Post-deploy check only. Prod's real gates are upstream (staging
+  # verification + soak) and the two approvals (ADR 0007).
+  verification:
+    analysisTemplates:
+      - name: pantry-smoke
+    args:
+      - name: host
+        value: pantry.example.com

@@ -64,6 +64,13 @@ spec:
         app.kubernetes.io/part-of: pantry-platform
       annotations:
         kargo.akuity.io/authorized-stage: "pantry:{{.stage}}"
+        # Argo CD Notifications (KARGO-22): the team channel hears about
+        # every deploy, failed sync and degradation, per stage. The
+        # `pantry-delivery` recipient and the `teams` service are configured
+        # in argocd-notifications-cm by pantry-infra (handoff §10).
+        notifications.argoproj.io/subscribe.on-deployed.teams: pantry-delivery
+        notifications.argoproj.io/subscribe.on-sync-failed.teams: pantry-delivery
+        notifications.argoproj.io/subscribe.on-health-degraded.teams: pantry-delivery
     spec:
       project: "pantry-{{.stage}}"
       source:

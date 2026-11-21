@@ -87,6 +87,7 @@ class Repo:
         self.warehouse = one(self.kargo, "Warehouse")
         self.stages = {s["metadata"]["name"]: s for s in by_kind(self.kargo, "Stage")}
         self.tasks = {t["metadata"]["name"]: t for t in by_kind(self.kargo, "PromotionTask")}
+        self.templates = {t["metadata"]["name"]: t for t in by_kind(self.kargo, "AnalysisTemplate")}
         git_subs = [s["git"] for s in self.warehouse["spec"]["subscriptions"] if "git" in s]
         self.repo_url = git_subs[0]["repoURL"] if git_subs else None
         self.legacy = None
@@ -280,6 +281,10 @@ def check_argocd(r: Repo) -> list[str]:
             gk = (d["apiVersion"].split("/")[0] if "/" in d["apiVersion"] else "", d["kind"])
             if gk not in allowed:
                 errs.append(f"hub/kargo {gk} not allowed by AppProject pantry-delivery")
+    subs = tmpl["metadata"].get("annotations", {})
+    for trigger in ("on-deployed", "on-sync-failed", "on-health-degraded"):
+        if not any(k.startswith(f"notifications.argoproj.io/subscribe.{trigger}.") for k in subs):
+            errs.append(f"ApplicationSet template: no notification subscription for {trigger} (KARGO-22)")
     for s in r.stage_names:
         proj = r.projects.get(f"pantry-{s}")
         if proj is None:
@@ -418,6 +423,66 @@ def check_kargo(r: Repo) -> list[str]:
     return errs
 
 
+def _pod_spec(template: dict) -> dict:
+    return template["spec"]["metrics"][0]["provider"]["job"]["spec"]["template"]["spec"]
+
+
+def check_verification(r: Repo) -> list[str]:
+    """Every stage is verified; the stage feeding prod runs the contract; prod soaks (M4)."""
+    errs = []
+    for tname, tmpl in r.templates.items():
+        for m in tmpl["spec"]["metrics"]:
+            pod = m["provider"]["job"]["spec"]["template"]["spec"]
+            if not pod.get("securityContext", {}).get("runAsNonRoot"):
+                errs.append(f"AnalysisTemplate {tname}: pod must runAsNonRoot")
+            for c in pod["containers"]:
+                img = c["image"]
+                tag = img.rsplit(":", 1)[1] if ":" in img.split("/")[-1] else None
+                if "@sha256:" not in img and (tag is None or tag == "latest"):
+                    errs.append(f"AnalysisTemplate {tname}: image {img!r} must be pinned (version tag or digest)")
+                sc = c.get("securityContext", {})
+                if sc.get("allowPrivilegeEscalation") is not False or not sc.get("readOnlyRootFilesystem"):
+                    errs.append(f"AnalysisTemplate {tname}/{c['name']}: no privilege escalation, read-only root fs")
+    feeds_prod = {u for rf in r.stages.get("prod", {}).get("spec", {}).get("requestedFreight", [])
+                  for u in rf["sources"].get("stages", [])}
+    for name, st in r.stages.items():
+        ver = st["spec"].get("verification")
+        if not ver:
+            errs.append(f"Stage {name}: no verification (KARGO-19)")
+            continue
+        used = [a["name"] for a in ver.get("analysisTemplates", [])]
+        for u in used:
+            if u not in r.templates:
+                errs.append(f"Stage {name}: unknown AnalysisTemplate {u!r}")
+        if "pantry-smoke" not in used:
+            errs.append(f"Stage {name}: must run pantry-smoke")
+        if name in feeds_prod and "pantry-api-contract" not in used:
+            errs.append(f"Stage {name}: feeds prod, so it must run pantry-api-contract (KARGO-20)")
+        args = {a["name"]: a.get("value") for a in ver.get("args", [])}
+        for u in used:
+            for a in r.templates.get(u, {}).get("spec", {}).get("args", []):
+                if "value" not in a and a["name"] not in args:
+                    errs.append(f"Stage {name}: AnalysisTemplate {u} needs arg {a['name']!r}")
+        if name in r.params and args.get("host") != r.params[name]["host"]:
+            errs.append(f"Stage {name}: verification host {args.get('host')!r} != "
+                        f"stages/{name}/params host {r.params[name]['host']!r}")
+    # Once provenance is enforced anywhere, every entry point from the
+    # Warehouse must enforce it, or unsigned Freight walks in the side door.
+    uses = {n: {a["name"] for a in (s["spec"].get("verification") or {}).get("analysisTemplates", [])}
+            for n, s in r.stages.items()}
+    if any("pantry-provenance" in u for u in uses.values()):
+        for n, s in r.stages.items():
+            direct = any(rf["sources"].get("direct") for rf in s["spec"]["requestedFreight"])
+            if direct and "pantry-provenance" not in uses[n]:
+                errs.append(f"Stage {n}: takes Freight directly from the Warehouse, so it must run "
+                            "pantry-provenance (KARGO-28)")
+    if "prod" in r.stages:
+        for rf in r.stages["prod"]["spec"]["requestedFreight"]:
+            if not rf["sources"].get("requiredSoakTime"):
+                errs.append("Stage prod: Freight must soak upstream first (requiredSoakTime, KARGO-21)")
+    return errs
+
+
 def check_cutover_state(r: Repo) -> list[str]:
     """Stages not yet adopted by the hub can't be promoted into, so don't automate them."""
     errs = []
@@ -530,7 +595,7 @@ def check_legacy_equivalence(r: Repo) -> list[str]:
 
 
 CHECKS = [check_stage_params, check_rendered, check_isolation, check_argocd, check_kargo,
-          check_cutover_state, check_rbac, check_credentials, check_legacy_equivalence]
+          check_verification, check_cutover_state, check_rbac, check_credentials, check_legacy_equivalence]
 
 
 def run(root: Path = REPO_ROOT, kustomize: str | None = None) -> dict[str, list[str]]:

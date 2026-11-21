@@ -162,6 +162,62 @@ class TestCheckGitops(unittest.TestCase):
                   "                  appNamespace: pantry-app\n                  dbNamespace: pantry-db\n")
         self.assertCaught("check_cutover_state", "remove the interim direct: true")
 
+    # ---- verification & gates (M4)
+    def test_stage_without_verification_is_caught(self):
+        p = self.tmp / "hub/kargo/stages.yaml"
+        text = p.read_text()
+        i = text.index("  verification:")  # dev's
+        j = text.index("---", i)
+        p.write_text(text[:i] + text[j:])
+        self.assertCaught("check_verification", "Stage dev: no verification")
+
+    def test_verification_host_drift_is_caught(self):
+        self.edit("stages/staging/params/stage-params.yaml", "host: staging.pantry.example.com",
+                  "host: stg.pantry.example.com")
+        self.assertCaught("check_verification", "verification host 'staging.pantry.example.com'")
+
+    def test_prod_feeder_without_contract_is_caught(self):
+        self.edit("hub/kargo/stages.yaml", "      - name: pantry-api-contract\n", "")
+        self.assertCaught("check_verification", "feeds prod, so it must run pantry-api-contract")
+
+    def test_prod_without_soak_is_caught(self):
+        self.edit("hub/kargo/stages.yaml", "        requiredSoakTime: 1h\n", "")
+        self.assertCaught("check_verification", "requiredSoakTime")
+
+    def test_unpinned_verification_image_is_caught(self):
+        self.edit("hub/kargo/analysis-templates.yaml", "curlimages/curl:8.11.1", "curlimages/curl")
+        self.assertCaught("check_verification", "must be pinned")
+
+    def test_kargo_kind_not_allowed_by_delivery_project_is_caught(self):
+        self.edit("hub/argocd/projects.yaml", "    - group: argoproj.io\n      kind: AnalysisTemplate\n", "")
+        self.assertCaught("check_argocd", "('argoproj.io', 'AnalysisTemplate') not allowed by AppProject pantry-delivery")
+
+    def test_missing_failure_notifications_is_caught(self):
+        self.edit("hub/argocd/stages-appset.yaml",
+                  "        notifications.argoproj.io/subscribe.on-sync-failed.teams: pantry-delivery\n", "")
+        self.assertCaught("check_argocd", "on-sync-failed")
+
+    PROVENANCE_ARGS = (
+        "      - name: api-image\n        value: x@sha256:1\n"
+        "      - name: web-image\n        value: x@sha256:2\n"
+        "      - name: migrate-image\n        value: x@sha256:3\n")
+
+    def enable_provenance(self, stage_host):
+        self.edit("hub/kargo/stages.yaml", f"      - name: host\n        value: {stage_host}\n",
+                  f"      - name: host\n        value: {stage_host}\n" + self.PROVENANCE_ARGS)
+        self.edit("hub/kargo/stages.yaml",
+                  f"    args:\n      - name: host\n        value: {stage_host}\n",
+                  f"      - name: pantry-provenance\n    args:\n      - name: host\n        value: {stage_host}\n")
+
+    def test_provenance_bypass_via_direct_stage_is_caught(self):
+        self.enable_provenance("dev.pantry.example.com")  # dev only; staging is still direct (interim)
+        self.assertCaught("check_verification", "Stage staging: takes Freight directly from the Warehouse")
+
+    def test_provenance_on_every_entry_point_passes(self):
+        self.enable_provenance("dev.pantry.example.com")
+        self.enable_provenance("staging.pantry.example.com")
+        self.assertEqual(check_gitops.run(self.tmp, KUSTOMIZE)["check_verification"], [])
+
     # ---- RBAC (ADR 0007)
     def test_promoters_gaining_prod_is_caught(self):
         self.edit("hub/kargo/rbac.yaml", "resourceNames: [dev, staging]", "resourceNames: [dev, staging, prod]")

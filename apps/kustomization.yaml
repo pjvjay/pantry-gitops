@@ -1,8 +1,10 @@
 # The Kustomize root ArgoCD renders for the pantry-apps Application.
 #
-# The `images` block is the single place image tags live. Each app
-# repo's CI runs `kustomize edit set image <name>=<name>:dev-<sha>`
-# here and pushes — that commit IS the deployment.
+# The `images` block is the single place image pins live. Each app
+# repo's CI runs scripts/bump_image_tag.py here, setting the release it
+# just cut (newTag X.Y.Z; dev-<sha> before versioning), and pushes —
+# that commit IS the deployment. One pin per entry, never latest:
+# verify.yml checks it (scripts/check_images.py).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: pantry-app

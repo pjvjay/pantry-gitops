@@ -225,9 +225,9 @@ Normal maximums are in [reference.md §3](reference.md#3-timings-what-normal-loo
 1. Check which step it's on (UI or `describe promotion`).
 2. `git-wait-for-pr` is waiting for a human: it's not stuck ([T11](#t11-prod-pr-problems)).
 3. `argocd-update` waiting: look at the Application's operation state (T7/T9). Argo CD may be retrying.
-4. If it will never finish: **abort**. `kargo abort promotion <name>` ⚑ [Oncall], or Kargo UI → Promotion
-   → *Abort*. The stage keeps whatever was last synced. Check the Applications, and promote again once the
-   cause is fixed.
+4. If it will never finish: **abort**. `kargo promote --name <promotion> --abort` ⚑ [Oncall], or Kargo UI →
+   Promotion → *Abort*. The stage keeps whatever was last synced. Check the Applications, and promote again
+   once the cause is fixed.
 
 ## T17. CI fails on a PR
 `scripts/check_gitops.py` prints `FAIL <check>` lines, each naming the rule and the ADR it protects:

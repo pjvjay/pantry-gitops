@@ -101,7 +101,7 @@ Before every PR: `python3 -m unittest discover -s scripts && python3 scripts/che
 |---|---|---|
 | **Refresh** the Warehouse | an image is in GHCR but no Freight yet | `kargo refresh warehouse pantry` ⚑ / UI → Warehouse → Refresh |
 | **Re-verify** a Stage | verification failed for an environmental reason (cert, DNS, dev stopped) | `kargo verify stage <stage>` ⚑ / UI → Stage → Reverify |
-| **Abort** a Promotion | stuck beyond normal timings, or started by mistake | `kargo abort promotion <name>` ⚑ / UI → Promotion → Abort |
+| **Abort** a Promotion | stuck beyond normal timings, or started by mistake | `kargo promote --name <promotion> --abort` ⚑ / UI → Promotion → Abort |
 | **Alias** a Freight | quarantine (`bad-<id>`), or label a release | UI → Freight → Edit alias |
 | **Approve** Freight for a Stage | IC-approved expedite ([promotion.md §7](promotion.md#7-expediting-a-hotfix)) | `kargo approve --freight <name> --stage <stage>` ⚑ [needs promote on that stage] |
 

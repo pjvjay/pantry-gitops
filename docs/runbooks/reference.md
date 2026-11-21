@@ -116,7 +116,7 @@ kargo promote --stage staging --freight <freight-name>             # ⚑ [Promot
 kargo promote --stage prod --freight-alias <alias>                 # ⚑ [ProdApprover]
 kargo refresh warehouse pantry                                     # ⚑ [Oncall]  discover now, don't wait 5 min
 kargo verify stage staging                                         # ⚑ [Oncall]  re-run verification
-kargo abort promotion <promotion-name>                             # ⚑ [Oncall]  stop a stuck Promotion
+kargo promote --name <promotion> --abort                           # ⚑ [Oncall]  stop a stuck Promotion
 gh pr list  -R pjvjay/pantry-gitops --base stage/prod               # prod promotions waiting for review
 gh pr diff  -R pjvjay/pantry-gitops <n>
 gh pr review -R pjvjay/pantry-gitops <n> --approve

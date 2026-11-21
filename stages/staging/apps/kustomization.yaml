@@ -1,0 +1,14 @@
+# Render root for Argo CD Application `pantry-apps-staging`.
+#
+# Kargo runs `kustomize-set-image` (digests) on a throwaway checkout of
+# this file at promotion time, then `kustomize build`s it into
+# stage/staging:apps/. Nothing writes back here, so keep it human-owned and
+# free of an `images:` block.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pantry-staging-app
+resources:
+  - ../../../base/apps
+  - ../params
+components:
+  - ../../../base/components/stage-params

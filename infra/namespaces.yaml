@@ -1,4 +1,8 @@
 # Both pantry namespaces, applied before anything that lives in them.
+#
+# Prune=false,Delete=false: Argo CD must never delete these namespaces,
+# even if this file leaves git or the pantry-infra Application is deleted.
+# This protects the database through the Kargo cutover (KARGO-23, ADR 0005).
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -7,6 +11,7 @@ metadata:
     app.kubernetes.io/part-of: pantry-platform
   annotations:
     argocd.argoproj.io/sync-wave: "-15"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 ---
 apiVersion: v1
 kind: Namespace
@@ -16,3 +21,4 @@ metadata:
     app.kubernetes.io/part-of: pantry-platform
   annotations:
     argocd.argoproj.io/sync-wave: "-15"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

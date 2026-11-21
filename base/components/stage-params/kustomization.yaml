@@ -1,0 +1,76 @@
+# Fans a stage's parameters (stages/<stage>/params/stage-params.yaml, a
+# local-config ConfigMap that is never emitted) out into the manifests.
+#
+# Used by every stage render root, both apps and infra. A replacement whose
+# target kind isn't present in a root (e.g. Ingress in infra) is a no-op.
+#
+# Namespaces are NOT set here. Each render root sets them with the plain
+# Kustomize `namespace:` field, which also renames the Namespace objects.
+# What can't be expressed that way lives here:
+#   host            -> both Ingresses (rules + TLS)
+#   dbNamespace     -> the middle label of DB_HOST (pantry-rw.<ns>.svc…)
+#   kvDbPasswordKey -> Key Vault key for the DB password (both projections)
+#   kvMcpTokensKey  -> Key Vault key for the MCP bearer tokens
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+replacements:
+  - source:
+      kind: ConfigMap
+      name: stage-params
+      fieldPath: data.host
+    targets:
+      - select:
+          kind: Ingress
+        fieldPaths:
+          - spec.rules.*.host
+      # Only the frontend Ingress declares TLS (see its header comment).
+      - select:
+          kind: Ingress
+          name: pantry-frontend
+        fieldPaths:
+          - spec.tls.*.hosts.*
+
+  - source:
+      kind: ConfigMap
+      name: stage-params
+      fieldPath: data.dbNamespace
+    targets:
+      # pantry-rw.pantry-db.svc.cluster.local, split on "." -> index 1
+      - select:
+          kind: Deployment
+          name: pantry-api
+        fieldPaths:
+          - spec.template.spec.containers.[name=api].env.[name=DB_HOST].value
+        options:
+          delimiter: "."
+          index: 1
+      - select:
+          kind: Job
+          name: pantry-db-migrate
+        fieldPaths:
+          - spec.template.spec.containers.[name=migrate].env.[name=DB_HOST].value
+        options:
+          delimiter: "."
+          index: 1
+
+  - source:
+      kind: ConfigMap
+      name: stage-params
+      fieldPath: data.kvDbPasswordKey
+    targets:
+      - select:
+          kind: ExternalSecret
+          name: pantry-app-credentials
+        fieldPaths:
+          - spec.data.[secretKey=password].remoteRef.key
+
+  - source:
+      kind: ConfigMap
+      name: stage-params
+      fieldPath: data.kvMcpTokensKey
+    targets:
+      - select:
+          kind: ExternalSecret
+          name: pantry-mcp-credentials
+        fieldPaths:
+          - spec.data.[secretKey=tokens].remoteRef.key

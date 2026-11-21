@@ -1,0 +1,20 @@
+# Stage parameters for `prod`: the ONE place its values live.
+# Cluster: `prod` (see hub/argocd/stages-appset.yaml).
+# prod runs on its own cluster with its own Key Vault, so it reuses the
+# canonical names. HA sizing, backups and PDBs arrive with KARGO-27 (M6).
+#
+# local-config: read by base/components/stage-params, never applied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stage-params
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  # Must match `namespace:` in ../apps and ../infra/app-ns (checked in CI).
+  appNamespace: pantry-app
+  # Must match `namespace:` in ../infra/db-ns (checked in CI).
+  dbNamespace: pantry-db
+  host: pantry.example.com  # CHANGE ME: DNS name for this stage
+  kvDbPasswordKey: pantry-db-password
+  kvMcpTokensKey: pantry-mcp-tokens

@@ -1,0 +1,26 @@
+# Anthropic API key for the /plan endpoints, projected into pantry-app.
+# References the `anthropic-api-key` entry in the cluster's Key Vault —
+# rotate once in KV, every consumer picks it up within refreshInterval.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: anthropic-credentials
+  namespace: pantry-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: azure-key-vault
+    kind: ClusterSecretStore
+  target:
+    name: anthropic-credentials
+    template:
+      type: Opaque
+      engineVersion: v2
+      data:
+        api_key: "{{ .api_key }}"
+  data:
+    - secretKey: api_key
+      remoteRef:
+        key: anthropic-api-key

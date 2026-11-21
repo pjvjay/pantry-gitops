@@ -1,0 +1,8 @@
+# Infra living in the stage's DB namespace: the namespace, the CNPG
+# Cluster, and the credentials its bootstrap reads.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - db-creds-db-ns.yaml
+  - postgres-cluster.yaml

@@ -1,0 +1,22 @@
+# Stage parameters for `dev`: the ONE place its values live.
+# Cluster: `dev` (see hub/argocd/stages-appset.yaml).
+# dev is the EXISTING environment, adopted in place (ADR 0001): same
+# namespaces, same Key Vault keys, same CNPG Cluster as the legacy
+# apps/ + infra/ trees, so adoption touches no data. check_gitops.py's
+# legacy-equivalence check fails CI if that stops being true.
+#
+# local-config: read by base/components/stage-params, never applied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stage-params
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  # Must match `namespace:` in ../apps and ../infra/app-ns (checked in CI).
+  appNamespace: pantry-app
+  # Must match `namespace:` in ../infra/db-ns (checked in CI).
+  dbNamespace: pantry-db
+  host: dev.pantry.example.com  # CHANGE ME: DNS name for this stage
+  kvDbPasswordKey: pantry-db-password
+  kvMcpTokensKey: pantry-mcp-tokens

@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pantry-db
+resources:
+  - ../../../../base/infra/db-ns
+  - ../../params
+components:
+  - ../../../../base/components/stage-params

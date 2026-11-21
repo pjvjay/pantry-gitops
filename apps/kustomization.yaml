@@ -1,8 +1,12 @@
 # The Kustomize root ArgoCD renders for the pantry-apps Application.
 #
 # The `images` block is the single place image tags live. Each app
-# repo's CI runs `kustomize edit set image <name>=<name>:dev-<sha>`
-# here and pushes — that commit IS the deployment.
+# repo's CI runs `scripts/bump_image_tag.py <name> dev-<sha>` here and
+# pushes — that commit IS the deployment.
+#
+# LEGACY: superseded by base/ + stages/ + Kargo (hub/kargo/). Live on the
+# dev cluster until the cutover (KARGO-23). Manifest changes made here
+# must also be made in base/ (CI's legacy-equivalence check enforces it).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: pantry-app

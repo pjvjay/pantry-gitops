@@ -1,0 +1,7 @@
+# Render root for Argo CD Application `pantry-infra-prod`.
+# Two sub-roots because infra spans the app and DB namespaces.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - app-ns
+  - db-ns

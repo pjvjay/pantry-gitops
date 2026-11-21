@@ -1,0 +1,448 @@
+Issue Id,Issue Type,Summary,Description,Priority,Story Points,Parent,Labels,Labels,Labels,Labels,Labels,Labels,Depends On,Depends On,Depends On,Depends On
+1,Epic,Progressive delivery for pantry-platform: Kargo-orchestrated promotion on Argo CD,"h3. Goal
+Replace the single-environment 'CI commits a tag to main' deployment loop with Kargo-orchestrated promotion of verified, immutable release candidates (Freight) through dev -> staging -> prod, with Argo CD remaining the sync engine for every stage.
+
+h3. Business value
+* Changes (images AND manifest/config changes) reach prod only after passing dev and staging verification.
+* Rollback becomes 'promote the previous Freight' instead of hand-reverting git commits on a shared branch.
+* App-repo CI no longer holds write credentials to the deployment repo (removes 3 standing deploy credentials).
+* Every stage's exact running state is auditable: Freight history in Kargo + rendered YAML in {{stage/<stage>}} branches.
+
+h3. In scope
+* Multi-stage layout of this repo (base + stage overlays, per-stage infra, ApplicationSet).
+* Kargo + Argo Rollouts CRDs added to the platform contract (installed by pantry-infra).
+* Kargo Project, Warehouse, PromotionTask, Stages, verification, promotion policies, RBAC/SSO.
+* Zero-data-loss cutover of the existing environment; removal of CI bump steps in app repos.
+
+h3. Out of scope
+* Separate prod AKS cluster (design keeps it a config change; separate epic).
+* Canary/blue-green rollouts of workloads via Argo Rollouts (only its AnalysisTemplate API is used).
+* Observability stack (Prometheus/Grafana) - metric-based verification is a follow-up.
+
+h3. Success metrics
+* A commit to pantry-api reaches dev with no human action and prod with exactly one approval, with no direct git writes by CI.
+* Lead time dev -> prod measured from Kargo Promotion timestamps; baseline captured in Sprint 1.
+* Rollback of any stage to the previous Freight completes in < 10 min (game day in KARGO-29).
+* Zero data loss during cutover (CNPG row counts identical before/after; backup verified).
+* No gitops-repo write credential remains in pantry-api / pantry-frontend / pantry-db.
+
+h3. Definition of Done
+* Manifests pass repo CI (kustomize build for all stages, kubeconform with CRD schemas, server-side dry-run where applicable).
+* Any new behaviour documented in README/runbooks; comments explain *why*, matching repo convention.
+* No secret values in git; all new credentials flow Key Vault -> ESO.
+* Versions of all new third-party components pinned (chart version + image digest).
+
+Design docs: docs/kargo-epic/01-current-state-analysis.md, 02-target-architecture.md",High,,,kargo-epic,progressive-delivery,,,,,,,,
+2,Task,[KARGO-01] ADR-001: Stage topology & environment isolation,"h3. Why
+Kargo needs >= 2 isolated stages; the baseline has exactly one environment with namespaces, DB host and ingress host hard-coded. Topology drives every later story.
+
+h3. Acceptance criteria
+# ADR merged under docs/adr/ deciding: stage list, namespace naming, host-per-stage vs path-per-stage, single cluster vs per-stage clusters, and per-stage vs shared Key Vault entries.
+# Product owner answer recorded for 'is existing pantry-db data disposable?' and the dev adoption strategy derived from it.
+# Resource budget for 3 stages estimated against current AKS node pool (incl. Kargo + Rollouts overhead).
+# Explicit note on the stop-when-idle cluster and what that means for a stage named 'prod'.
+
+h3. Context
+* Milestone: M0
+* Repo: pantry-gitops
+* Depends on: none
+* Backlog key: KARGO-01",Highest,2,1,kargo-epic,m0,adr,architecture,spike,,,,,
+3,Task,[KARGO-02] ADR-002: Git promotion pattern (rendered stage branches vs overlays on main),"h3. Why
+Determines whether manifest/config changes are gated by the pipeline (analysis R6), whether argocd-update desiredRevision is unambiguous (R5), and whether Kargo ever rewrites human-authored, commented files (R9).
+
+h3. Acceptance criteria
+# ADR compares both patterns on: config-change gating, revision ambiguity, Warehouse feedback loops, audit, prod gate, branch protection, comment preservation.
+# Decision validated by the KARGO-05 PoC (not by documentation alone).
+# Branch naming ({{stage/<stage>}}) and ownership rules (Kargo-only) recorded.
+
+h3. Context
+* Milestone: M0
+* Repo: pantry-gitops
+* Depends on: KARGO-05
+* Backlog key: KARGO-02",Highest,3,1,kargo-epic,m0,adr,architecture,spike,,6,,,
+4,Task,"[KARGO-03] ADR-003: Freight composition & artifact identity (tags, digests, Warehouse layout)","h3. Why
+{{dev-<sha7>}} tags are not orderable (only NewestBuild works) and put an environment name on artifacts promoted to prod. Single vs multiple Warehouses changes how api+migrate coupling behaves.
+
+h3. Acceptance criteria
+# Decision: one Warehouse {{pantry}} with 3 image + 1 git subscription (or documented alternative).
+# Phase-1 selection strategy (NewestBuild + allowTags regex + discoveryLimit) and Phase-2 target tag scheme agreed with app-repo owners.
+# Promotion writes image digests, not tags - confirmed.
+# GHCR visibility confirmed (public/private) and registry rate-limit impact of polling interval assessed; webhook-triggered discovery evaluated.
+
+h3. Context
+* Milestone: M0
+* Repo: pantry-gitops
+* Depends on: none
+* Backlog key: KARGO-03",High,2,1,kargo-epic,m0,adr,supply-chain,spike,,,,,
+5,Task,[KARGO-04] ADR-004: DB migration compatibility contract under promotion & rollback,"h3. Why
+Rollback = promoting older Freight; migrations are forward-only, so the older API will run against a newer schema (analysis R4). Without a contract, rollback is unsafe.
+
+h3. Acceptance criteria
+# Expand/contract rule documented in pantry-db CONTRIBUTING + PR template checklist.
+# Behaviour of the PreSync migrate Job when older Freight is promoted is tested and documented (expected: no-op).
+# Schema-restore break-glass path defined (links to KARGO-27 pre-promotion backup).
+
+h3. Context
+* Milestone: M0
+* Repo: pantry-db
+* Depends on: none
+* Backlog key: KARGO-04",High,3,1,kargo-epic,m0,adr,database,cross-repo,spike,,,,
+6,Task,[KARGO-05] PoC: Kargo <-> Argo CD integration on kind (pin Kargo version),"h3. Why
+Several integration behaviours must be proven, not assumed: authorization annotation, argocd-update with desiredRevision under auto-sync/selfHeal, ApplicationSet ownership, PreSync hook failure propagation, and verification prerequisites. Output pins the Kargo version used everywhere else.
+
+h3. Acceptance criteria
+# kind cluster with Argo CD, cert-manager, Argo Rollouts CRDs, Kargo (pinned chart) running a 2-stage copy of this repo.
+# Proven: an Application WITHOUT {{kargo.akuity.io/authorized-stage}} is refused by argocd-update; WITH it, sync succeeds.
+# Proven: auto-sync + selfHeal left ON does not conflict with argocd-update; root app/ApplicationSet do not revert Kargo-triggered syncs.
+# Proven: failing PreSync migration Job -> failed sync -> failed Promotion -> Freight not verified.
+# Proven: infra-then-apps argocd-update ordering on a cold stage converges without relying on retry.
+# Reference manifests in docs/kargo-epic/02 corrected to the pinned version's schema; findings written up.
+
+h3. Context
+* Milestone: M0
+* Repo: pantry-gitops
+* Depends on: none
+* Backlog key: KARGO-05",Highest,5,1,kargo-epic,m0,spike,argocd,kargo,,,,,
+7,Story,[KARGO-06] Add Kargo + Argo Rollouts CRDs to the platform contract (pantry-infra),"h3. Why
+Kargo and the AnalysisTemplate API it uses for verification are new platform prerequisites, installed alongside Argo CD, cert-manager, CNPG and ESO (ADR-006).
+
+h3. Acceptance criteria
+# Kargo Helm chart installed by pantry-infra Terraform at the version pinned in KARGO-05; images pinned by digest.
+# Argo Rollouts CRDs (and controller if required by the pinned Kargo version) installed.
+# Kargo uses existing cert-manager for webhook/API TLS; Kargo UI exposed via ingress-nginx with a letsencrypt-prod certificate.
+# Kargo controller configured for Argo CD namespace {{argocd}}; controller restarts cleanly after {{az aks stop/start}}.
+# Admin account disabled or its credential stored only in Key Vault; README 'Bootstrap' prerequisites list updated.
+
+h3. Context
+* Milestone: M1
+* Repo: pantry-infra
+* Depends on: KARGO-05
+* Backlog key: KARGO-06",High,5,1,kargo-epic,m1,platform,kargo,cross-repo,supply-chain,6,,,
+8,Story,[KARGO-07] Kargo SSO (Entra ID OIDC) and project RBAC,"h3. Why
+Promotion to prod must be restricted to an approver group; viewing should be broad.
+
+h3. Acceptance criteria
+# Kargo API server authenticates via Entra ID OIDC.
+# Groups mapped to Kargo roles: viewer (all), promoter (dev/staging), prod-approver (prod).
+# A user outside prod-approver cannot promote to prod (tested).
+# Group object IDs sourced from Terraform, not hard-coded in this repo.
+
+h3. Context
+* Milestone: M1
+* Repo: pantry-infra
+* Depends on: KARGO-06
+* Backlog key: KARGO-07",Medium,3,1,kargo-epic,m1,platform,security,rbac,,7,,,
+9,Story,"[KARGO-08] Kargo credentials: GitHub App (git write) + GHCR read, delivered via Key Vault -> ESO","h3. Why
+Kargo becomes the only automated writer to the gitops repo. Its credential must follow the baseline secret model (no values in git) and be narrower than today's CI tokens.
+
+h3. Acceptance criteria
+# GitHub App installed on pantry-gitops only, contents:write + pull_requests:write; private key stored in Key Vault by Terraform.
+# ExternalSecret in Kargo project namespace produces a Secret labelled {{kargo.akuity.io/cred-type: git}}.
+# If GHCR packages are private: read-only credential projected with {{kargo.akuity.io/cred-type: image}}.
+# Rotation procedure documented (rotate in KV -> ESO refresh -> Kargo picks up).
+
+h3. Context
+* Milestone: M1
+* Repo: pantry-infra
+* Depends on: KARGO-06
+* Backlog key: KARGO-08",High,3,1,kargo-epic,m1,security,secrets,cross-repo,,7,,,
+10,Story,[KARGO-09] AppProject `pantry-delivery` + Argo CD Application for kargo/; extend `pantry` destinations,"h3. Why
+Kargo {{Project}} is cluster-scoped and the {{pantry}} AppProject only whitelists Namespace. Keep workload project least-privilege and manage pipeline definitions via GitOps in their own project (ADR-005 #5).
+
+h3. Acceptance criteria
+# New AppProject {{pantry-delivery}}: source = this repo, destination = ns {{pantry}}, cluster whitelist = kargo.akuity.io/Project only.
+# New {{argocd/kargo-application.yaml}} syncs {{kargo/}} with sync-waves (Project before namespaced Kargo CRs).
+# {{pantry}} AppProject destinations extended with staging/prod namespaces; nothing else widened.
+# Root app picks both up with no manual kubectl.
+
+h3. Context
+* Milestone: M1
+* Repo: pantry-gitops
+* Depends on: KARGO-06
+* Backlog key: KARGO-09",High,2,1,kargo-epic,m1,argocd,gitops,,,7,,,
+11,Story,[KARGO-10] Restructure apps/ into base/apps + stages/<stage>/apps overlays,"h3. Why
+Stage-specific values are hard-coded today: {{namespace: pantry-app}}, DB_HOST {{pantry-rw.pantry-db.svc...}} (api + migrate Job), ingress host {{pantry.example.com}} (x3).
+
+h3. Acceptance criteria
+# {{base/apps}} holds today's manifests with no stage-specific values; explanatory comments preserved.
+# Overlays for dev/staging/prod set namespace, DB_HOST (via replacement/patch), ingress host + TLS secret, sizing.
+# Equivalence check: rendered {{stages/dev/apps}} == rendered current {{apps/}} except intended differences (diff attached to PR).
+# {{apps/}} left in place until cutover (KARGO-23) so the live env is untouched by this change.
+
+h3. Context
+* Milestone: M2
+* Repo: pantry-gitops
+* Depends on: KARGO-01, KARGO-02
+* Backlog key: KARGO-10",High,5,1,kargo-epic,m2,kustomize,gitops,,,2,3,,
+12,Story,"[KARGO-11] Per-stage infra: namespaces, CNPG Cluster, ExternalSecrets, Key Vault entries, DNS","h3. Why
+Each stage needs its own DB and credentials. infra/ spans two namespaces, so it must be split (app-ns / db-ns) for Kustomize namespace transforms. Sync waves (-15/-10/-5) must survive.
+
+h3. Acceptance criteria
+# {{base/infra/{app-ns,db-ns}}} + {{stages/<stage>/infra}} render the correct namespaces, KV keys and sync-wave annotations.
+# pantry-infra Terraform creates per-stage KV entries (db password, mcp tokens; anthropic key per ADR-001) and DNS records.
+# Missing-KV-entry failure mode (mcp-creds Degraded) documented per stage, with Terraform applied first.
+# Staging stage infra comes up healthy from zero on the real cluster.
+
+h3. Context
+* Milestone: M2
+* Repo: pantry-gitops + pantry-infra
+* Depends on: KARGO-01, KARGO-10
+* Backlog key: KARGO-11",High,5,1,kargo-epic,m2,infra,database,secrets,cross-repo,2,11,,
+13,Story,"[KARGO-12] ApplicationSet generating pantry-{infra,apps}-<stage> Applications","h3. Why
+Kargo requires one annotated Application per stage it promotes. Infra and apps MUST stay separate Applications: a PreSync hook runs before all waves, so merging them deadlocks a cold stage (analysis R3).
+
+h3. Acceptance criteria
+# ApplicationSet (matrix: stage x layer) creates Applications targeting {{stage/<stage>}}, path {{infra}}|{{apps}}.
+# Each carries {{kargo.akuity.io/authorized-stage: pantry:<stage>}}.
+# Finalizer policy decided per stage and documented (no cascading delete into a stage DB).
+# Staging + prod Applications live now; dev element added only during cutover (KARGO-23).
+# {{CreateNamespace=true}} vs infra-owned Namespace double ownership resolved.
+
+h3. Context
+* Milestone: M2
+* Repo: pantry-gitops
+* Depends on: KARGO-10, KARGO-11
+* Backlog key: KARGO-12",High,3,1,kargo-epic,m2,argocd,applicationset,,,11,12,,
+14,Story,"[KARGO-13] CI for pantry-gitops: render, schema-validate and test every stage","h3. Why
+There is no CI in this repo today; the existing unit tests are never run. With multiple stages, a broken overlay must fail in the PR, not in a promotion.
+
+h3. Acceptance criteria
+# GitHub Actions workflow runs on PRs to main: {{kustomize build}} for every stages/*/*, kubeconform with CRD schemas (CNPG, ESO, Argo CD, Kargo, Rollouts), yamllint, {{python3 -m unittest discover -s scripts}}.
+# Tooling binaries verified by checksum/digest pinned in the repo (consistent with bump_image_tag.py rationale); actions pinned by SHA.
+# Kargo manifests validated against pinned CRDs (server-side dry-run on kind, or schema validation).
+# Required status check on main.
+
+h3. Context
+* Milestone: M2
+* Repo: pantry-gitops
+* Depends on: none
+* Backlog key: KARGO-13",High,3,1,kargo-epic,m2,ci,quality,supply-chain,,,,,
+15,Task,[KARGO-14] Branch protection: main (PR + CI) and stage/* (Kargo GitHub App only),"h3. Why
+Stage branches are machine-owned; humans editing them bypass Kargo's audit and verification.
+
+h3. Acceptance criteria
+# main: PR required, KARGO-13 checks required, no direct pushes (incl. CI bots).
+# stage/dev, stage/staging: push restricted to the Kargo GitHub App.
+# stage/prod: changes only via PR with required review from prod-approver team; Kargo App may open PRs.
+# Break-glass admin bypass documented (KARGO-29).
+
+h3. Context
+* Milestone: M2
+* Repo: GitHub settings
+* Depends on: KARGO-08
+* Backlog key: KARGO-14",Medium,1,1,kargo-epic,m2,security,github,,,9,,,
+16,Task,"[KARGO-30] Hygiene: ESO API version, documentation drift, placeholder host","h3. Why
+Found during analysis (R10): docs still describe {{kustomize edit set image}}; ExternalSecrets use {{external-secrets.io/v1beta1}}; ingress host is a placeholder.
+
+h3. Acceptance criteria
+# ExternalSecrets moved to the API version served by the installed ESO (v1 if available).
+# README mermaid + comments in argocd/apps-application.yaml and apps/kustomization.yaml match reality.
+# Placeholder host replaced by per-stage hosts from KARGO-10.
+
+h3. Context
+* Milestone: M2
+* Repo: pantry-gitops
+* Depends on: none
+* Backlog key: KARGO-30",Low,2,1,kargo-epic,m2,tech-debt,docs,,,,,,
+17,Story,"[KARGO-15] Kargo Project, ProjectConfig and Warehouse `pantry`","h3. Why
+The Warehouse turns new images and config commits into Freight, the unit of promotion.
+
+h3. Acceptance criteria
+# kargo/ contains Project, ProjectConfig and Warehouse per ADR-003; synced by the KARGO-09 Application.
+# Git subscription limited to base/ and stages/ - a change in kargo/, argocd/ or docs/ creates NO Freight (tested).
+# Pushing a new pantry-api image produces new Freight within the discovery interval (or webhook).
+# Freight shows api, frontend, migrate digests + gitops commit in the UI.
+
+h3. Context
+* Milestone: M3
+* Repo: pantry-gitops
+* Depends on: KARGO-03, KARGO-08, KARGO-09
+* Backlog key: KARGO-15",High,3,1,kargo-epic,m3,kargo,warehouse,,,4,9,10,
+18,Story,"[KARGO-16] PromotionTask `render-and-promote` (render to stage/<stage>, argocd-update infra then apps)","h3. Why
+One reusable task implements the promotion for every stage, so stages can't drift in behaviour.
+
+h3. Acceptance criteria
+# Task clones main at the Freight's commit, sets image digests, renders infra + apps, fully replaces stage branch contents.
+# Commit message includes Freight ID and stage; rendered files contain digests (no tags).
+# argocd-update runs infra first, then apps, each with desiredRevision = the new commit; no Application spec is modified.
+# Re-promoting the same Freight is idempotent (no empty commits / or handled gracefully).
+# Failure at any step leaves the stage branch and cluster in the previous good state.
+
+h3. Context
+* Milestone: M3
+* Repo: pantry-gitops
+* Depends on: KARGO-15, KARGO-10, KARGO-11, KARGO-12
+* Backlog key: KARGO-16",High,5,1,kargo-epic,m3,kargo,promotion,,,17,11,12,13
+19,Story,[KARGO-17] Stages dev -> staging -> prod with dev auto-promotion,"h3. Why
+Defines the pipeline shape: only Freight verified upstream becomes eligible downstream.
+
+h3. Acceptance criteria
+# Stage dev requests Freight directly from Warehouse; auto-promotion enabled via ProjectConfig.
+# Stage staging sources from dev; prod sources from staging.
+# Freight not verified in dev cannot be promoted to staging without explicit manual approval (tested).
+# End-to-end: new api image -> dev automatically -> staging on one click, in the real cluster.
+
+h3. Context
+* Milestone: M3
+* Repo: pantry-gitops
+* Depends on: KARGO-16
+* Backlog key: KARGO-17",High,3,1,kargo-epic,m3,kargo,promotion,,,18,,,
+20,Story,[KARGO-18] Prod promotion via pull request on stage/prod,"h3. Why
+Two independent gates for prod: Kargo RBAC (who may promote) and GitHub review (what exactly changes, as a rendered YAML diff).
+
+h3. Acceptance criteria
+# Prod promotion pushes to a generated branch, opens a PR to stage/prod, waits for merge (git-open-pr / git-wait-for-pr).
+# argocd-update targets the merge commit.
+# Closing the PR without merge fails the Promotion cleanly.
+# PR description links the Freight and the source commits/images.
+
+h3. Context
+* Milestone: M3
+* Repo: pantry-gitops
+* Depends on: KARGO-17, KARGO-14
+* Backlog key: KARGO-18",High,3,1,kargo-epic,m3,kargo,promotion,governance,,19,15,,
+21,Story,[KARGO-19] Smoke-test AnalysisTemplate used by every stage,"h3. Why
+Today nothing runs after deploy apart from probes; 'verified' Freight must mean something.
+
+h3. Acceptance criteria
+# AnalysisTemplate {{pantry-smoke}} (job, image pinned by digest) checks api /health, frontend /healthz, and ingress routing of /pantry and /pantry/api on the stage host.
+# Configured as verification on dev, staging and prod with stage-specific args.
+# A deliberately broken build fails verification in dev and is not eligible for staging (tested).
+
+h3. Context
+* Milestone: M4
+* Repo: pantry-gitops
+* Depends on: KARGO-17
+* Backlog key: KARGO-19",High,3,1,kargo-epic,m4,kargo,verification,,,19,,,
+22,Story,[KARGO-20] Staging functional verification using a test image published by pantry-api,"h3. Why
+Smoke tests prove liveness, not correctness. Staging should gate prod on API behaviour (recipes, MCP auth, /plan with LLM calls stubbed or budget-capped).
+
+h3. Acceptance criteria
+# pantry-api CI publishes a versioned test-runner image alongside the app image (same commit).
+# Staging AnalysisTemplate runs it against the staging host; results visible in the AnalysisRun.
+# LLM-dependent tests are stubbed or budget-capped (Anthropic spend per run documented).
+# Runtime < 10 min; flaky tests quarantined, not retried blindly.
+
+h3. Context
+* Milestone: M4
+* Repo: pantry-gitops + pantry-api
+* Depends on: KARGO-19
+* Backlog key: KARGO-20",Medium,5,1,kargo-epic,m4,verification,cross-repo,testing,,21,,,
+23,Story,"[KARGO-21] Promotion policies: soak time, approvals, sync windows","h3. Why
+Prod eligibility should require time-in-staging, not just a green test run.
+
+h3. Acceptance criteria
+# Freight must soak in staging for an agreed duration before prod eligibility (requiredSoakTime or equivalent for the pinned version).
+# Auto-promotion disabled for staging and prod.
+# If Argo CD sync windows are used for prod, their interaction with Kargo-triggered syncs is tested and documented.
+
+h3. Context
+* Milestone: M4
+* Repo: pantry-gitops
+* Depends on: KARGO-17, KARGO-07
+* Backlog key: KARGO-21",Medium,2,1,kargo-epic,m4,kargo,governance,,,19,8,,
+24,Story,[KARGO-22] Promotion & verification notifications,"h3. Why
+Humans need to know when Freight is ready for prod or a promotion failed.
+
+h3. Acceptance criteria
+# Failed promotion/verification in any stage notifies the team channel.
+# Freight verified in staging and eligible for prod notifies prod-approvers.
+# Mechanism chosen (Kargo-native if available in pinned version, else Argo CD Notifications on stage Applications) and documented.
+
+h3. Context
+* Milestone: M4
+* Repo: pantry-gitops
+* Depends on: KARGO-17
+* Backlog key: KARGO-22",Low,3,1,kargo-epic,m4,observability,notifications,,,19,,,
+25,Story,[KARGO-23] Cutover: adopt the live environment as stage dev with zero data loss,"h3. Why
+pantry-apps/pantry-infra carry resources-finalizer and the root app prunes: removing their files from git would cascade-delete the CNPG Cluster (analysis R1). This is the highest-risk change in the epic.
+
+h3. Acceptance criteria
+# Runbook written and rehearsed end-to-end on kind with a seeded DB, including rollback steps.
+# CNPG backup taken and restore-tested before the change.
+# Finalizers removed / non-cascading deletion of pantry-apps and pantry-infra BEFORE their files leave git.
+# pantry-{infra,apps}-dev adopt live resources; no pod restarts of the CNPG instance; row counts identical before/after.
+# First Kargo promotion to dev succeeds; {{kubectl get applications -n argocd}} shows the new set, all Synced/Healthy.
+
+h3. Context
+* Milestone: M5
+* Repo: pantry-gitops
+* Depends on: KARGO-12, KARGO-16, KARGO-17, KARGO-19
+* Backlog key: KARGO-23",Highest,8,1,kargo-epic,m5,cutover,database,runbook,,13,18,19,21
+26,Story,"[KARGO-24] App repos: remove gitops bump step, revoke write credentials, adopt neutral tags","h3. Why
+After cutover the bump commits to main would be ignored by Kargo but still confusing - and the credential is a standing risk. Phase 2 of ADR-003 tags images neutrally and orderably.
+
+h3. Acceptance criteria
+# Bump step removed from all 3 workflows; gitops write credential deleted from each repo/org secret.
+# Images additionally tagged per ADR-003 Phase 2; Warehouse switched to SemVer/Lexical; {{dev-}} prefix no longer required.
+# Verified: no identity other than the Kargo GitHub App (and PR-merging humans) can write to pantry-gitops.
+
+h3. Context
+* Milestone: M5
+* Repo: pantry-api, pantry-frontend, pantry-db
+* Depends on: KARGO-23, KARGO-03
+* Backlog key: KARGO-24",High,5,1,kargo-epic,m5,ci,security,cross-repo,supply-chain,25,4,,
+27,Task,[KARGO-25] Retire scripts/bump_image_tag.py and legacy apps/ + argocd child apps,"h3. Why
+Superseded by Kargo's in-process kustomize-set-image. Keep for an agreed period as break-glass only.
+
+h3. Acceptance criteria
+# Removed after 2 weeks of stable Kargo operation (or retained, documented as break-glass, if KARGO-29 needs it).
+# Legacy apps/, argocd/apps-application.yaml, argocd/infra-application.yaml removed (their Applications already gone per KARGO-23).
+
+h3. Context
+* Milestone: M5
+* Repo: pantry-gitops
+* Depends on: KARGO-24
+* Backlog key: KARGO-25",Low,1,1,kargo-epic,m5,tech-debt,,,,26,,,
+28,Story,[KARGO-26] Rewrite README + operator runbooks for the Kargo model,"h3. Why
+README describes the old loop, rollback by {{git revert HEAD}}, and 'Deploy a new API version - you don't'.
+
+h3. Acceptance criteria
+# README: new loop diagram, layout, sync ordering per stage, Kargo concepts (Warehouse/Freight/Stage) in one paragraph each.
+# Runbooks: promote, roll back (promote previous Freight + schema caveat), add a service, add a stage, rotate Kargo credentials.
+# 'Who can deploy what, how' table reflecting the new security model.
+
+h3. Context
+* Milestone: M5
+* Repo: pantry-gitops
+* Depends on: KARGO-23
+* Backlog key: KARGO-26",High,3,1,kargo-epic,m5,docs,runbook,,,25,,,
+29,Story,"[KARGO-27] Prod stage hardening: CNPG HA + backups, pre-promotion backup, replicas, PDBs","h3. Why
+Baseline runs 1 Postgres instance with no backup config and 1 replica per Deployment (analysis R7); rollback of a schema requires a backup taken before the prod migration (ADR-004).
+
+h3. Acceptance criteria
+# Prod overlay: CNPG instances=3, barman backups to Azure Blob (storage + identity via pantry-infra), restore tested.
+# A CNPG Backup is taken before each prod promotion's migration (PreSync hook in prod overlay or promotion step) and its success gates the sync.
+# Prod Deployments: replicas >= 2, PodDisruptionBudgets, anti-affinity.
+
+h3. Context
+* Milestone: M6
+* Repo: pantry-gitops + pantry-infra
+* Depends on: KARGO-11
+* Backlog key: KARGO-27",Medium,8,1,kargo-epic,m6,prod-readiness,database,ha,,12,,,
+30,Story,[KARGO-28] Artifact provenance: sign images in CI and verify before promotion,"h3. Why
+Digests make artifacts immutable; signatures prove where they came from.
+
+h3. Acceptance criteria
+# CI signs images (cosign keyless / GitHub OIDC) and attaches SBOM attestations.
+# Verification step (AnalysisTemplate job or admission policy) rejects unsigned images before staging.
+# Approach documented against Kargo's native capabilities in the pinned version.
+
+h3. Context
+* Milestone: M6
+* Repo: all app repos + pantry-gitops
+* Depends on: KARGO-24
+* Backlog key: KARGO-28",Low,5,1,kargo-epic,m6,supply-chain,security,,,26,,,
+31,Story,[KARGO-29] Break-glass & DR procedures + rollback game day,"h3. Why
+Kargo becomes a critical path; the team must be able to deploy/roll back when it is down.
+
+h3. Acceptance criteria
+# Break-glass: revert on stage/<stage> by admin bypass, documented + audited; Kargo reconciles afterwards.
+# Game day executed: roll prod back one Freight in < 10 min; Kargo-down scenario exercised.
+# Recovery of Kargo state documented (pipeline in git, history in stage branches).
+
+h3. Context
+* Milestone: M6
+* Repo: pantry-gitops
+* Depends on: KARGO-23
+* Backlog key: KARGO-29",Medium,2,1,kargo-epic,m6,runbook,dr,,,25,,,

@@ -1,0 +1,164 @@
+# Who may do what in Kargo project `pantry` (ADR 0007).
+#
+# Kargo maps OIDC token claims to these ServiceAccounts via the
+# `rbac.kargo.akuity.io/claim.<claim>` annotation. A user gets the union of
+# every Role whose ServiceAccount matches one of their claim values.
+# We match Entra ID *app roles* (the `roles` claim, with readable values
+# defined on the Kargo app registration), not group object IDs, so no
+# GUIDs live in git and the token group-overage limit doesn't apply.
+#
+#   Pantry.Viewer        read everything
+#   Pantry.Promoter      + promote to dev and staging
+#   Pantry.ProdApprover  + promote to prod (the PR merge on stage/prod is
+#                          the second, independent prod gate)
+#   Pantry.Oncall        + OPERATE the pipeline: refresh a Warehouse or
+#                          Stage, re-run verification, abort a stuck
+#                          Promotion, set Freight aliases. Kargo implements
+#                          all of these as annotation patches, hence `patch`
+#                          only. PIM-activated for the on-call shift.
+#                          Grants NO promotion rights; on-call engineers
+#                          also hold Promoter / ProdApprover
+#                          (docs/runbooks/oncall.md).
+#
+# Nobody gets create/update/delete on pipeline objects: the pipeline
+# changes only by PR to hub/kargo/ (Argo CD selfHeal reverts hand edits).
+# check_gitops.py allows `patch` only for Pantry.Oncall, on exactly the
+# four resources below.
+# Kargo system admins (`Kargo.Admin`) are configured in the Kargo Helm
+# values by pantry-infra, not here.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pantry-viewer
+  namespace: pantry
+  annotations:
+    rbac.kargo.akuity.io/claim.roles: Pantry.Viewer,Pantry.Promoter,Pantry.ProdApprover,Pantry.Oncall
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pantry-viewer
+  namespace: pantry
+rules:
+  - apiGroups: [kargo.akuity.io]
+    resources: [freights, projectconfigs, promotions, promotiontasks, stages, warehouses]
+    verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources: [analysisruns, analysistemplates]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pantry-viewer
+  namespace: pantry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pantry-viewer
+subjects:
+  - kind: ServiceAccount
+    name: pantry-viewer
+    namespace: pantry
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pantry-promoter
+  namespace: pantry
+  annotations:
+    rbac.kargo.akuity.io/claim.roles: Pantry.Promoter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pantry-promoter
+  namespace: pantry
+rules:
+  # `promote` is Kargo's custom verb. Scoped by name: NOT prod.
+  - apiGroups: [kargo.akuity.io]
+    resources: [stages]
+    resourceNames: [dev, staging]
+    verbs: [promote]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pantry-promoter
+  namespace: pantry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pantry-promoter
+subjects:
+  - kind: ServiceAccount
+    name: pantry-promoter
+    namespace: pantry
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pantry-prod-approver
+  namespace: pantry
+  annotations:
+    rbac.kargo.akuity.io/claim.roles: Pantry.ProdApprover
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pantry-prod-approver
+  namespace: pantry
+rules:
+  - apiGroups: [kargo.akuity.io]
+    resources: [stages]
+    resourceNames: [prod]
+    verbs: [promote]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pantry-prod-approver
+  namespace: pantry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pantry-prod-approver
+subjects:
+  - kind: ServiceAccount
+    name: pantry-prod-approver
+    namespace: pantry
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pantry-oncall
+  namespace: pantry
+  annotations:
+    rbac.kargo.akuity.io/claim.roles: Pantry.Oncall
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pantry-oncall
+  namespace: pantry
+rules:
+  - apiGroups: [kargo.akuity.io]
+    resources: [freights, promotions, stages, warehouses]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pantry-oncall
+  namespace: pantry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pantry-oncall
+subjects:
+  - kind: ServiceAccount
+    name: pantry-oncall
+    namespace: pantry

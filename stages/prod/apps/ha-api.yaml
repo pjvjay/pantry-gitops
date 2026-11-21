@@ -1,0 +1,18 @@
+# Prod-only workload HA (KARGO-27): two replicas of each stateless
+# workload, spread across nodes, with a PDB (pdb.yaml) so node drains and
+# upgrades never take the app down.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pantry-api
+spec:
+  replicas: 2
+  template:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: pantry-api

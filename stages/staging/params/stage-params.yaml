@@ -1,0 +1,21 @@
+# Stage parameters for `staging`: the ONE place its values live.
+# Cluster: `dev` (see hub/argocd/stages-appset.yaml).
+# staging shares the dev cluster (and its Key Vault) with dev, so its
+# namespaces and Key Vault keys must differ from dev's. check_gitops.py
+# enforces that no two stages on one cluster collide.
+#
+# local-config: read by base/components/stage-params, never applied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stage-params
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  # Must match `namespace:` in ../apps and ../infra/app-ns (checked in CI).
+  appNamespace: pantry-staging-app
+  # Must match `namespace:` in ../infra/db-ns (checked in CI).
+  dbNamespace: pantry-staging-db
+  host: staging.pantry.example.com  # CHANGE ME: DNS name for this stage
+  kvDbPasswordKey: pantry-staging-db-password
+  kvMcpTokensKey: pantry-staging-mcp-tokens

@@ -1,0 +1,12 @@
+# Daily base backup at 03:00 (CNPG cron has a leading seconds field).
+# WAL is archived continuously, so point-in-time recovery covers the gaps.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pantry-daily
+  namespace: pantry-db
+spec:
+  schedule: "0 0 3 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: pantry

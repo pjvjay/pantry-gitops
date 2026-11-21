@@ -1,0 +1,128 @@
+# Artifact provenance gate (KARGO-28): every promoted image must carry a
+# keyless cosign signature made by its OWN repo's GitHub Actions workflow on
+# main. Digests already make the artifacts immutable; this proves where they
+# came from.
+#
+# NOT WIRED YET, deliberately. The app repos don't sign images today
+# (docs/handoffs/app-repos.md §3), so enabling this now would fail every
+# verification and freeze the pipeline. To enable, add to EVERY stage that
+# takes Freight directly from the Warehouse (dev; plus staging while the
+# interim `direct: true` exists):
+#
+#   verification:
+#     analysisTemplates:
+#       - name: pantry-provenance
+#     args:
+#       - name: api-image
+#         value: ${{ imageFrom("ghcr.io/pjvjay/pantry-api").RepoURL }}@${{ imageFrom("ghcr.io/pjvjay/pantry-api").Digest }}
+#       # ...web-image, migrate-image likewise
+#
+# check_gitops.py then refuses any direct-from-Warehouse stage without it,
+# so unsigned Freight can't slip in through a side door.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: pantry-provenance
+  namespace: pantry
+spec:
+  args:
+    - name: api-image
+    - name: web-image
+    - name: migrate-image
+    - name: identity
+      # Signed by a workflow in the matching pantry repo, on main only.
+      value: ^https://github\.com/pjvjay/pantry-(api|frontend|db)/\.github/workflows/.+@refs/heads/main$
+  metrics:
+    - name: provenance
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 300
+            template:
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65534
+                  seccompProfile:
+                    type: RuntimeDefault
+                # cosign caches the Sigstore TUF root under $HOME; give it a
+                # writable scratch dir so the root filesystem stays read-only.
+                volumes:
+                  - name: scratch
+                    emptyDir: {}
+                # One container per image; the Job fails if any signature doesn't verify.
+                containers:
+                  - name: api
+                    image: ghcr.io/sigstore/cosign/cosign:v2.4.1
+                    args:
+                      - verify
+                      - --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+                      - --certificate-identity-regexp={{args.identity}}
+                      - "{{args.api-image}}"
+                    env:
+                      - name: HOME
+                        value: /scratch
+                    volumeMounts:
+                      - name: scratch
+                        mountPath: /scratch
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: [ALL]
+                    resources:
+                      requests:
+                        cpu: 10m
+                        memory: 32Mi
+                      limits:
+                        memory: 128Mi
+                  - name: web
+                    image: ghcr.io/sigstore/cosign/cosign:v2.4.1
+                    args:
+                      - verify
+                      - --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+                      - --certificate-identity-regexp={{args.identity}}
+                      - "{{args.web-image}}"
+                    env:
+                      - name: HOME
+                        value: /scratch
+                    volumeMounts:
+                      - name: scratch
+                        mountPath: /scratch
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: [ALL]
+                    resources:
+                      requests:
+                        cpu: 10m
+                        memory: 32Mi
+                      limits:
+                        memory: 128Mi
+                  - name: migrate
+                    image: ghcr.io/sigstore/cosign/cosign:v2.4.1
+                    args:
+                      - verify
+                      - --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+                      - --certificate-identity-regexp={{args.identity}}
+                      - "{{args.migrate-image}}"
+                    env:
+                      - name: HOME
+                        value: /scratch
+                    volumeMounts:
+                      - name: scratch
+                        mountPath: /scratch
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: [ALL]
+                    resources:
+                      requests:
+                        cpu: 10m
+                        memory: 32Mi
+                      limits:
+                        memory: 128Mi

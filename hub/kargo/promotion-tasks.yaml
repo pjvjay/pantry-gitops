@@ -1,0 +1,177 @@
+# How a Freight is promoted into a stage (ADR 0002, 0005).
+#
+# Both tasks render the same way:
+#   1. check out main AT THE FREIGHT'S COMMIT (./src) + the stage branch (./out)
+#   2. wipe ./out. Rendered output is regenerated in full, never patched
+#   3. pin the Freight's three images BY DIGEST in the throwaway ./src copy
+#   4. kustomize build stages/<stage>/{infra,apps} -> ./out/{infra,apps}/
+# They differ only in how the commit reaches the stage branch:
+#   render-and-push  direct push                     (dev, staging)
+#   render-and-pr    PR to stage/<stage>; the merge   (prod, ADR 0007)
+#                    is the human gate
+# Then Argo CD is asked to sync infra and, after it, apps to exactly that
+# commit. No Application spec is ever modified (ADR 0005 §2).
+#
+# The render steps (through the second kustomize-build) MUST stay identical
+# in both tasks. check_gitops.py fails CI if they drift.
+#
+# Step outputs inside a PromotionTask are read via `task.outputs.<alias>`.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: PromotionTask
+metadata:
+  name: render-and-push
+  namespace: pantry
+spec:
+  vars:
+    - name: repoURL
+      value: https://github.com/pjvjay/pantry-gitops.git
+  steps:
+    - uses: git-clone
+      config:
+        repoURL: ${{ vars.repoURL }}
+        checkout:
+          - commit: ${{ commitFrom(vars.repoURL).ID }}
+            path: ./src
+          - branch: stage/${{ ctx.stage }}
+            # First promotion into a stage creates its branch.
+            create: true
+            path: ./out
+    - uses: git-clear
+      config:
+        path: ./out
+    - uses: kustomize-set-image
+      config:
+        path: ./src/stages/${{ ctx.stage }}/apps
+        images:
+          - image: ghcr.io/pjvjay/pantry-api
+            digest: ${{ imageFrom("ghcr.io/pjvjay/pantry-api").Digest }}
+          - image: ghcr.io/pjvjay/pantry-frontend
+            digest: ${{ imageFrom("ghcr.io/pjvjay/pantry-frontend").Digest }}
+          - image: ghcr.io/pjvjay/pantry-db-migrate
+            digest: ${{ imageFrom("ghcr.io/pjvjay/pantry-db-migrate").Digest }}
+    - uses: kustomize-build
+      config:
+        path: ./src/stages/${{ ctx.stage }}/infra
+        outPath: ./out/infra/manifests.yaml
+    - uses: kustomize-build
+      config:
+        path: ./src/stages/${{ ctx.stage }}/apps
+        outPath: ./out/apps/manifests.yaml
+    - uses: git-commit
+      as: commit
+      config:
+        path: ./out
+        message: |
+          promote ${{ ctx.targetFreight.name }} to ${{ ctx.stage }}
+
+          gitops:  ${{ commitFrom(vars.repoURL).ID }}
+          api:     ${{ imageFrom("ghcr.io/pjvjay/pantry-api").Tag }}
+          web:     ${{ imageFrom("ghcr.io/pjvjay/pantry-frontend").Tag }}
+          migrate: ${{ imageFrom("ghcr.io/pjvjay/pantry-db-migrate").Tag }}
+    - uses: git-push
+      config:
+        path: ./out
+    # Infra first (namespaces, secrets, CNPG), then apps (PreSync migration,
+    # then workloads): ordering the baseline only got from retry/backoff.
+    - uses: argocd-update
+      config:
+        apps:
+          - name: pantry-infra-${{ ctx.stage }}
+            sources:
+              - repoURL: ${{ vars.repoURL }}
+                desiredRevision: ${{ task.outputs.commit.commit }}
+    - uses: argocd-update
+      config:
+        apps:
+          - name: pantry-apps-${{ ctx.stage }}
+            sources:
+              - repoURL: ${{ vars.repoURL }}
+                desiredRevision: ${{ task.outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: PromotionTask
+metadata:
+  name: render-and-pr
+  namespace: pantry
+spec:
+  vars:
+    - name: repoURL
+      value: https://github.com/pjvjay/pantry-gitops.git
+  steps:
+    - uses: git-clone
+      config:
+        repoURL: ${{ vars.repoURL }}
+        checkout:
+          - commit: ${{ commitFrom(vars.repoURL).ID }}
+            path: ./src
+          - branch: stage/${{ ctx.stage }}
+            # First promotion into a stage creates its branch.
+            create: true
+            path: ./out
+    - uses: git-clear
+      config:
+        path: ./out
+    - uses: kustomize-set-image
+      config:
+        path: ./src/stages/${{ ctx.stage }}/apps
+        images:
+          - image: ghcr.io/pjvjay/pantry-api
+            digest: ${{ imageFrom("ghcr.io/pjvjay/pantry-api").Digest }}
+          - image: ghcr.io/pjvjay/pantry-frontend
+            digest: ${{ imageFrom("ghcr.io/pjvjay/pantry-frontend").Digest }}
+          - image: ghcr.io/pjvjay/pantry-db-migrate
+            digest: ${{ imageFrom("ghcr.io/pjvjay/pantry-db-migrate").Digest }}
+    - uses: kustomize-build
+      config:
+        path: ./src/stages/${{ ctx.stage }}/infra
+        outPath: ./out/infra/manifests.yaml
+    - uses: kustomize-build
+      config:
+        path: ./src/stages/${{ ctx.stage }}/apps
+        outPath: ./out/apps/manifests.yaml
+    - uses: git-commit
+      as: commit
+      config:
+        path: ./out
+        message: |
+          promote ${{ ctx.targetFreight.name }} to ${{ ctx.stage }}
+
+          gitops:  ${{ commitFrom(vars.repoURL).ID }}
+          api:     ${{ imageFrom("ghcr.io/pjvjay/pantry-api").Tag }}
+          web:     ${{ imageFrom("ghcr.io/pjvjay/pantry-frontend").Tag }}
+          migrate: ${{ imageFrom("ghcr.io/pjvjay/pantry-db-migrate").Tag }}
+    # Push to a generated kargo/... branch, not to the stage branch:
+    # stage/prod only changes through a reviewed, merged PR.
+    - uses: git-push
+      as: push
+      config:
+        path: ./out
+        generateTargetBranch: true
+    - uses: git-open-pr
+      as: openpr
+      config:
+        repoURL: ${{ vars.repoURL }}
+        sourceBranch: ${{ task.outputs.push.branch }}
+        targetBranch: stage/${{ ctx.stage }}
+        title: "promote ${{ ctx.targetFreight.name }} to ${{ ctx.stage }}"
+    # Blocks until the PR is merged. Closing it unmerged fails the
+    # Promotion, and the stage keeps running what it had.
+    - uses: git-wait-for-pr
+      as: waitpr
+      config:
+        repoURL: ${{ vars.repoURL }}
+        prNumber: ${{ task.outputs.openpr.pr.id }}
+    - uses: argocd-update
+      config:
+        apps:
+          - name: pantry-infra-${{ ctx.stage }}
+            sources:
+              - repoURL: ${{ vars.repoURL }}
+                desiredRevision: ${{ task.outputs.waitpr.commit }}
+    - uses: argocd-update
+      config:
+        apps:
+          - name: pantry-apps-${{ ctx.stage }}
+            sources:
+              - repoURL: ${{ vars.repoURL }}
+                desiredRevision: ${{ task.outputs.waitpr.commit }}

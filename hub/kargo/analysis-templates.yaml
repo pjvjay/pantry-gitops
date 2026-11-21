@@ -1,0 +1,141 @@
+# Post-promotion verification (M4: KARGO-19, KARGO-20).
+#
+# Kargo runs these (Argo Rollouts AnalysisTemplate API) after a promotion's
+# Argo CD sync is Healthy. Freight that passes is "verified in <stage>" and
+# becomes eligible for the next stage. Freight that fails is not.
+#
+# The Jobs run on the HUB (prod cluster, namespace `pantry`), while dev and
+# staging run on the dev cluster. So every check goes through the stage's
+# PUBLIC host, which also proves DNS, ingress routing and the TLS cert
+# (curl verifies it, no -k).
+#
+# Job images: pinned to an explicit version (never latest or untagged).
+# check_gitops.py enforces this. Resolve to digests when the hub's registry
+# access allows (docs/handoffs/pantry-infra.md §2).
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: pantry-smoke
+  namespace: pantry
+spec:
+  args:
+    - name: host
+  metrics:
+    - name: smoke
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 300
+            template:
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65534
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: smoke
+                    image: curlimages/curl:8.11.1
+                    command: [sh, -ec]
+                    args:
+                      - |
+                        base="https://{{args.host}}"
+                        get() {
+                          curl -fsS --retry 10 --retry-delay 6 --retry-all-errors --max-time 10 \
+                            -o /dev/null -w "%{http_code} $1\n" "$base$1"
+                        }
+                        get /pantry/api/health   # API via the rewrite ingress
+                        get /pantry/             # SPA via the frontend ingress
+                        echo "smoke ok: $base"
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: [ALL]
+                    resources:
+                      requests:
+                        cpu: 10m
+                        memory: 16Mi
+                      limits:
+                        memory: 64Mi
+---
+# Black-box API contract checks, run in staging before Freight may reach
+# prod (KARGO-20). Read-only, and it never calls /plan (LLM cost). The
+# deeper functional suite that pantry-api could publish as a test image is
+# described in docs/handoffs/app-repos.md.
+#
+# What it asserts (from this repo's own docs; confirm with pantry-api):
+#   - /openapi.json is served under the root path and declares /health,
+#     /recipes and a /plan... route  (README, ingress comments)
+#   - /recipes answers 200 with JSON  (ingress-api.yaml example path)
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: pantry-api-contract
+  namespace: pantry
+spec:
+  args:
+    - name: host
+  metrics:
+    - name: api-contract
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 300
+            template:
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65534
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: contract
+                    image: python:3.12.8-alpine3.21
+                    env:
+                      - name: PYTHONDONTWRITEBYTECODE
+                        value: "1"
+                      - name: BASE
+                        value: "https://{{args.host}}/pantry/api"
+                    command: [python3, -c]
+                    args:
+                      - |
+                        import json, os, sys, time, urllib.request
+                        base = os.environ["BASE"]
+                        def get(path):
+                            for attempt in range(10):
+                                try:
+                                    with urllib.request.urlopen(base + path, timeout=15) as r:
+                                        return r.status, r.headers.get("content-type", ""), r.read()
+                                except Exception as e:
+                                    err = e
+                                    time.sleep(6)
+                            sys.exit(f"FAIL GET {path}: {err}")
+                        failures = []
+                        def check(ok, msg):
+                            print(("ok   " if ok else "FAIL ") + msg)
+                            ok or failures.append(msg)
+                        _, _, body = get("/openapi.json")
+                        paths = json.loads(body).get("paths", {})
+                        check("/health" in paths, "openapi declares /health")
+                        check("/recipes" in paths, "openapi declares /recipes")
+                        check(any(p.startswith("/plan") for p in paths), "openapi declares a /plan route")
+                        status, ctype, body = get("/recipes")
+                        check(status == 200 and "json" in ctype, f"/recipes -> 200 JSON (got {status} {ctype})")
+                        json.loads(body)
+                        sys.exit(f"{len(failures)} contract check(s) failed" if failures else 0)
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: [ALL]
+                    resources:
+                      requests:
+                        cpu: 10m
+                        memory: 32Mi
+                      limits:
+                        memory: 128Mi

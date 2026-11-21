@@ -1,0 +1,26 @@
+# Render root for Argo CD Application `pantry-apps-prod`.
+#
+# Kargo runs `kustomize-set-image` (digests) on a throwaway checkout of
+# this file at promotion time, then `kustomize build`s it into
+# stage/prod:apps/. Nothing writes back here, so keep it human-owned and
+# free of an `images:` block.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pantry-app
+resources:
+  - ../../../base/apps
+  - ../params
+  # Prod hardening (KARGO-27)
+  - pdb.yaml
+components:
+  - ../../../base/components/stage-params
+# `target` matches by kind+name whatever the base namespace is.
+patches:
+  - path: ha-api.yaml
+    target:
+      kind: Deployment
+      name: pantry-api
+  - path: ha-frontend.yaml
+    target:
+      kind: Deployment
+      name: pantry-frontend

@@ -1,0 +1,35 @@
+# Prod-only Postgres hardening (KARGO-27). Dev and staging keep the
+# baseline single instance, and dev MUST stay byte-identical to the live
+# legacy Cluster (check_legacy_equivalence).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pantry
+spec:
+  # 1 primary + 2 replicas; CNPG fails over automatically.
+  instances: 3
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    # preferred, not required: a small node pool must still schedule all 3.
+    podAntiAffinityType: preferred
+  # Continuous WAL archiving + base backups to Azure Blob, authenticated
+  # with Workload Identity (no storage keys anywhere). The storage account,
+  # container and user-assigned identity come from pantry-infra (handoff §11).
+  inheritedMetadata:
+    labels:
+      azure.workload.identity/use: "true"
+  serviceAccountTemplate:
+    metadata:
+      annotations:
+        azure.workload.identity/client-id: 00000000-0000-0000-0000-000000000000  # CHANGE ME
+  backup:
+    retentionPolicy: 30d
+    barmanObjectStore:
+      destinationPath: https://CHANGEME.blob.core.windows.net/pantry-prod-backups  # CHANGE ME
+      azureCredentials:
+        inheritFromAzureAD: true
+      wal:
+        compression: gzip
+      data:
+        compression: gzip

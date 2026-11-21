@@ -1,0 +1,12 @@
+# Infra living in the stage's APP namespace: the namespace itself and the
+# ExternalSecrets the API Deployment and migration Job read.
+#
+# Split from db-ns/ because a Kustomize `namespace:` transformer sets ONE
+# namespace per kustomization, and infra spans two.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - anthropic-creds.yaml
+  - db-creds-app-ns.yaml
+  - mcp-creds.yaml

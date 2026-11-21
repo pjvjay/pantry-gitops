@@ -1,0 +1,96 @@
+# Every stage's Argo CD Applications: {infra, apps} x {stages}.
+#
+#   pantry-infra-<stage>  -> stage/<stage>:infra/  (namespaces, secrets, CNPG)
+#   pantry-apps-<stage>   -> stage/<stage>:apps/   (migration hook + workloads)
+#
+# Infra and apps stay SEPARATE Applications: the migration Job is a PreSync
+# hook, and PreSync runs before every sync wave, so merging them would
+# deadlock a cold stage (ADR 0004 §4). Kargo syncs infra, then apps.
+#
+# Kargo integration (ADR 0005):
+#   - kargo.akuity.io/authorized-stage lets exactly ONE Kargo Stage sync
+#     each Application. Without it Kargo refuses.
+#   - targetRevision is the stage branch, permanently. Kargo never edits
+#     these specs (if it did, this ApplicationSet would revert it). It
+#     commits to the branch and asks Argo CD to sync that commit.
+#   - The stage branch doesn't exist until the stage's first promotion;
+#     until then the Application shows a ComparisonError. That's expected.
+#
+# Data safety: no resources-finalizer on generated Applications, and
+# preserveResourcesOnDeletion, so removing an element or this file
+# orphans resources rather than deleting them.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: pantry-stages
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                # dev is PENDING ADOPTION. The legacy argocd/ tree on the dev
+                # cluster's own Argo CD still owns pantry-app/pantry-db. Two
+                # Argo CDs must never manage the same namespace, so this
+                # element is enabled during the cutover runbook (KARGO-23),
+                # after the legacy Applications are removed WITHOUT cascade.
+                # check_gitops.py keeps dev's Kargo auto-promotion off while
+                # this stays commented out.
+                # - stage: dev
+                #   cluster: dev
+                #   appNamespace: pantry-app
+                #   dbNamespace: pantry-db
+                - stage: staging
+                  cluster: dev
+                  appNamespace: pantry-staging-app
+                  dbNamespace: pantry-staging-db
+                - stage: prod
+                  cluster: prod
+                  appNamespace: pantry-app
+                  dbNamespace: pantry-db
+          - list:
+              elements:
+                - layer: infra
+                - layer: apps
+  template:
+    metadata:
+      name: "pantry-{{.layer}}-{{.stage}}"
+      labels:
+        app.kubernetes.io/part-of: pantry-platform
+      annotations:
+        kargo.akuity.io/authorized-stage: "pantry:{{.stage}}"
+        # Argo CD Notifications (KARGO-22): the team channel hears about
+        # every deploy, failed sync and degradation, per stage. The
+        # `pantry-delivery` recipient and the `teams` service are configured
+        # in argocd-notifications-cm by pantry-infra (handoff §10).
+        notifications.argoproj.io/subscribe.on-deployed.teams: pantry-delivery
+        notifications.argoproj.io/subscribe.on-sync-failed.teams: pantry-delivery
+        notifications.argoproj.io/subscribe.on-health-degraded.teams: pantry-delivery
+    spec:
+      project: "pantry-{{.stage}}"
+      source:
+        repoURL: https://github.com/pjvjay/pantry-gitops.git
+        targetRevision: "stage/{{.stage}}"
+        path: "{{.layer}}"
+      destination:
+        name: "{{.cluster}}"
+        namespace: '{{ if eq .layer "infra" }}{{ .dbNamespace }}{{ else }}{{ .appNamespace }}{{ end }}'
+      syncPolicy:
+        # Auto-sync + selfHeal stay ON (ADR 0005 §3): drift is reverted, and
+        # the branch only ever contains what Kargo promoted.
+        automated:
+          prune: true
+          selfHeal: true
+        # No CreateNamespace: namespaces are owned by the infra layer (wave
+        # -15), which Kargo syncs before apps.
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m

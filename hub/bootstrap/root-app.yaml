@@ -1,0 +1,34 @@
+# Hub root Application: the seed for the Kargo-era control plane.
+#
+# Applied ONCE to the hub's Argo CD (the prod cluster, ADR 0001) by
+# pantry-infra's Terraform, or by hand:
+#   kubectl --context <hub> apply -f hub/bootstrap/root-app.yaml
+# It syncs hub/argocd/, which creates:
+#   - one AppProject per stage + pantry-delivery     (projects.yaml)
+#   - the ApplicationSet for every stage's Applications (stages-appset.yaml)
+#   - the Application that syncs the Kargo pipeline   (kargo-application.yaml)
+#
+# NOT to be confused with argocd/root-app.yaml, the LEGACY seed that runs
+# the current environment on the dev cluster's own Argo CD until the
+# cutover (KARGO-23).
+#
+# No resources-finalizer, deliberately: deleting the seed must never
+# cascade into stages or their data (ADR 0005 §5).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pantry-hub-root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/pjvjay/pantry-gitops.git
+    targetRevision: main
+    path: hub/argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

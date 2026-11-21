@@ -1,0 +1,32 @@
+# The promotion pipeline is GitOps-managed too: hub/kargo/ (Kargo Project,
+# Warehouse, Stages, PromotionTasks, RBAC, credentials) synced from main.
+# Pipeline changes go through a PR like any other change. Manual edits in
+# the Kargo UI/CLI to these objects are reverted by selfHeal.
+#
+# No CreateNamespace: the Kargo Project creates and owns namespace
+# `pantry`. An Argo CD-created namespace would make Kargo refuse the
+# Project. The retry covers the brief window before that namespace exists.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pantry-kargo
+  namespace: argocd
+spec:
+  project: pantry-delivery
+  source:
+    repoURL: https://github.com/pjvjay/pantry-gitops.git
+    targetRevision: main
+    path: hub/kargo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pantry
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

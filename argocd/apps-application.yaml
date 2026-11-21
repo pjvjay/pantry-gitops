@@ -1,7 +1,10 @@
 # Child Application: the app workloads (API, frontend, ingress,
-# migration Job). Watches apps/ — a Kustomize tree, so the CI pipelines
+# migration Job). Watches apps/, a Kustomize tree, so the CI pipelines
 # in pantry-api / pantry-frontend / pantry-db can bump image tags with
-# `kustomize edit set image`.
+# scripts/bump_image_tag.py.
+#
+# LEGACY: runs the current environment on the dev cluster until the
+# Kargo cutover (KARGO-23), when hub/ adopts it as stage `dev`.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

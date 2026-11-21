@@ -1,0 +1,11 @@
+# The stage's database namespace. Same protection as the app namespace,
+# and here it matters most: the CNPG PVCs live in it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pantry-db
+  labels:
+    app.kubernetes.io/part-of: pantry-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "-15"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

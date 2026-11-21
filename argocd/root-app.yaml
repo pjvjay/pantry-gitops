@@ -1,5 +1,9 @@
 # Root Application — the App-of-Apps seed.
 #
+# LEGACY: this seeds the dev cluster's own Argo CD and runs today's
+# environment until the Kargo cutover (KARGO-23). The Kargo-era control
+# plane is seeded from hub/bootstrap/root-app.yaml on the hub instead.
+#
 # This is the ONLY resource that isn't applied by ArgoCD itself. It's
 # created once by pantry-infra's Terraform (or by hand:
 # `kubectl apply -f argocd/root-app.yaml`). It points at this argocd/

@@ -16,6 +16,9 @@ metadata:
     # After the ExternalSecrets (wave -10): bootstrap reads the
     # pantry-app-credentials Secret during initdb.
     argocd.argoproj.io/sync-wave: "-5"
+    # The data. Argo CD must never delete it: not on prune, not when the
+    # owning Application is deleted (ADR 0005 §5, analysis R1).
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   instances: 1
 

@@ -1,0 +1,156 @@
+# One AppProject per stage. Each is locked to exactly its stage's cluster
+# and namespaces, and to the kinds a stage actually renders. A mistake in
+# a staging overlay therefore cannot deploy into dev's namespaces (same
+# cluster) or into prod, and a stage can't grow new resource types
+# without a reviewed change here. check_gitops.py verifies that every
+# rendered resource fits its stage's project.
+#
+# Cluster names (`dev`, `prod`) are Argo CD cluster-secret names that
+# pantry-infra registers on the hub (ADR 0001). Using names rather than
+# URLs keeps this repo independent of where the hub runs.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: pantry-dev
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: pantry-platform dev stage (dev cluster, adopted legacy namespaces)
+  sourceRepos:
+    - https://github.com/pjvjay/pantry-gitops.git
+  destinations:
+    - name: dev
+      namespace: pantry-app
+    - name: dev
+      namespace: pantry-db
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: postgresql.cnpg.io
+      kind: Cluster
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: pantry-staging
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: pantry-platform staging stage (dev cluster)
+  sourceRepos:
+    - https://github.com/pjvjay/pantry-gitops.git
+  destinations:
+    - name: dev
+      namespace: pantry-staging-app
+    - name: dev
+      namespace: pantry-staging-db
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: postgresql.cnpg.io
+      kind: Cluster
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: pantry-prod
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: pantry-platform prod stage (prod cluster)
+  sourceRepos:
+    - https://github.com/pjvjay/pantry-gitops.git
+  destinations:
+    - name: prod
+      namespace: pantry-app
+    - name: prod
+      namespace: pantry-db
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: postgresql.cnpg.io
+      kind: Cluster
+    # Prod hardening (KARGO-27)
+    - group: postgresql.cnpg.io
+      kind: Backup
+    - group: postgresql.cnpg.io
+      kind: ScheduledBackup
+    - group: policy
+      kind: PodDisruptionBudget
+---
+# The delivery pipeline itself (Kargo resources), kept apart from the
+# workload projects so they stay least-privilege (ADR 0005 §6). Kargo's
+# `Project` is cluster-scoped, hence the one cluster-level allowance.
+# Destination is "the hub itself", wherever it runs.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: pantry-delivery
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: pantry-platform Kargo promotion pipeline
+  sourceRepos:
+    - https://github.com/pjvjay/pantry-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: pantry
+  clusterResourceWhitelist:
+    - group: kargo.akuity.io
+      kind: Project
+  namespaceResourceWhitelist:
+    - group: kargo.akuity.io
+      kind: ProjectConfig
+    - group: kargo.akuity.io
+      kind: Warehouse
+    - group: kargo.akuity.io
+      kind: Stage
+    - group: kargo.akuity.io
+      kind: PromotionTask
+    - group: argoproj.io
+      kind: AnalysisTemplate
+    - group: ""
+      kind: ServiceAccount
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
+    - group: external-secrets.io
+      kind: ExternalSecret

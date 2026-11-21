@@ -1,0 +1,15 @@
+# Shared app workloads for every stage: API, frontend, ingress, and the
+# PreSync migration Job.
+#
+# Deliberately has NO `images:` block and NO stage-specific values:
+#   - images: Kargo pins digests per stage at promotion time (ADR 0003)
+#   - namespace / DB host / ingress host: stages/<stage>/ (ADR 0001)
+# A change here becomes new Freight and is promoted dev -> staging -> prod
+# like an image (ADR 0002). It never reaches every stage at once.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - migrate-job.yaml
+  - pantry-api
+  - pantry-frontend
+  - pantry-ingress

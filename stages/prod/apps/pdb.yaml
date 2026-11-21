@@ -1,0 +1,23 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pantry-api
+  labels:
+    app.kubernetes.io/part-of: pantry-platform
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: pantry-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pantry-frontend
+  labels:
+    app.kubernetes.io/part-of: pantry-platform
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: pantry-frontend

@@ -1,0 +1,82 @@
+# Validates every change to this repo BEFORE it can become Freight
+# (KARGO-13). Required status check on main (scripts/github_rulesets.sh).
+#
+#   1. unit tests           scripts/test_*.py (checker + its mutation tests,
+#                           cutover steps, CRD converter, Argo CD Lua health
+#                           checks, runbook links/names (test_docs), legacy
+#                           bump script)
+#   2. cross-layer checks   scripts/check_gitops.py: stage params x Argo CD
+#                           x Kargo agree; isolation, data-safety, RBAC and
+#                           cutover invariants; dev == live legacy
+#   3. render               every stage, as Kargo's kustomize-build will
+#   4. strict schemas       kubeconform -strict: built-ins, Argo CD/ESO/CNPG/
+#                           Rollouts (CRDs-catalog), and Kargo from the EXACT
+#                           chart version pinned for the hub. This is the step
+#                           that catches required-with-default Kargo fields
+#                           such as strictSemvers.
+#
+# Supply chain (same stance as scripts/bump_image_tag.py): nothing is
+# fetched that isn't integrity-checked. Go tools via `go install` are
+# verified against the Go checksum database (sum.golang.org). PyYAML is
+# pinned by sha256 (--require-hashes). Actions are pinned by commit SHA.
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  KUSTOMIZE_VERSION: v5.6.0
+  KUBECONFORM_VERSION: v0.6.7
+  # MUST equal the Kargo version pantry-infra installs on the hub (ADR 0006).
+  # Confirmed or bumped by the PoC (KARGO-05). Bump both together.
+  KARGO_VERSION: 1.6.0
+  # Oldest Kubernetes minor across the dev and prod clusters.
+  KUBERNETES_VERSION: 1.31.0
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install pinned tools
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          go install "sigs.k8s.io/kustomize/kustomize/v5@${KUSTOMIZE_VERSION}"
+          go install "github.com/yannh/kubeconform/cmd/kubeconform@${KUBECONFORM_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          python3 -m venv .venv
+          .venv/bin/pip install --no-cache-dir --require-hashes -r scripts/requirements-ci.txt
+
+      - name: Unit tests
+        run: .venv/bin/python -m unittest discover -s scripts -v
+
+      - name: Cross-layer checks
+        run: .venv/bin/python scripts/check_gitops.py
+
+      - name: Render every stage
+        run: scripts/render_stages.sh rendered
+
+      - name: Kargo schemas from the pinned chart
+        run: |
+          helm pull oci://ghcr.io/akuity/kargo-charts/kargo --version "${KARGO_VERSION}" \
+            --untar --untardir .kargo-chart
+          .venv/bin/python scripts/crd_to_jsonschema.py .kargo-chart schemas
+
+      - name: Strict schema validation
+        run: |
+          kubeconform -strict -summary -output text \
+            -kubernetes-version "${KUBERNETES_VERSION}" \
+            -schema-location default \
+            -schema-location 'schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered/ hub/ $(test -d infra && echo infra/)   # legacy infra/ until KARGO-25

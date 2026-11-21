@@ -23,8 +23,15 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+KARGO_API = "kargo.akuity.io/v1alpha1"
 LAYERS = ("infra", "apps")
+# Steps that must be byte-identical in every PromotionTask (ADR 0002):
+# everything that determines WHAT gets rendered.
+RENDER_STEP_USES = ("git-clone", "git-clear", "kustomize-set-image", "kustomize-build", "git-commit")
 PROTECT = "Prune=false,Delete=false"
+# Kargo's operational actions (refresh, reverify, abort, alias) are
+# annotation patches on exactly these resources (ADR 0007).
+ONCALL_PATCHABLE = {"freights", "promotions", "stages", "warehouses"}
 
 
 # --------------------------------------------------------------- loading
@@ -73,8 +80,15 @@ class Repo:
         self.rendered = {s: {layer: kustomize_build(kustomize, root / f"stages/{s}/{layer}") for layer in LAYERS}
                          for s in self.stage_names}
         self.argocd = load_dir(root / "hub/argocd")
+        self.kargo = load_dir(root / "hub/kargo")
         self.appset = one(self.argocd, "ApplicationSet")
         self.projects = {p["metadata"]["name"]: p for p in by_kind(self.argocd, "AppProject")}
+        self.kargo_project = one(self.kargo, "Project")
+        self.warehouse = one(self.kargo, "Warehouse")
+        self.stages = {s["metadata"]["name"]: s for s in by_kind(self.kargo, "Stage")}
+        self.tasks = {t["metadata"]["name"]: t for t in by_kind(self.kargo, "PromotionTask")}
+        git_subs = [s["git"] for s in self.warehouse["spec"]["subscriptions"] if "git" in s]
+        self.repo_url = git_subs[0]["repoURL"] if git_subs else None
         self.legacy = None
         if (root / "apps/kustomization.yaml").exists() and (root / "infra").is_dir():
             self.legacy = kustomize_build(kustomize, root / "apps") + load_dir(root / "infra", recurse=True)
@@ -84,12 +98,36 @@ class Repo:
         stage_gen = self.appset["spec"]["generators"][0]["matrix"]["generators"][0]
         return stage_gen["list"]["elements"]
 
+    def appset_layers(self) -> list[str]:
+        layer_gen = self.appset["spec"]["generators"][0]["matrix"]["generators"][1]
+        return [e["layer"] for e in layer_gen["list"]["elements"]]
+
+    def adopted(self) -> set[str]:
+        """Stages whose Argo CD Applications exist (ApplicationSet element enabled)."""
+        return {e["stage"] for e in self.appset_elements()}
+
     def cluster_of(self, stage: str) -> str | None:
         for e in self.appset_elements():
             if e["stage"] == stage:
                 return e["cluster"]
         names = {d.get("name") for d in self.projects.get(f"pantry-{stage}", {}).get("spec", {}).get("destinations", [])}
         return names.pop() if len(names) == 1 else None
+
+    def task_of(self, stage: str) -> dict | None:
+        steps = self.stages[stage]["spec"]["promotionTemplate"]["spec"]["steps"]
+        names = [s["task"]["name"] for s in steps if "task" in s]
+        return self.tasks.get(names[0]) if len(names) == 1 else None
+
+    def base_images(self) -> set[str]:
+        imgs = set()
+        for s in self.stage_names:
+            for d in self.rendered[s]["apps"]:
+                for c in _containers(d):
+                    imgs.add(c["image"])
+        return imgs
+
+    def warehouse_images(self) -> set[str]:
+        return {s["image"]["repoURL"] for s in self.warehouse["spec"]["subscriptions"] if "image" in s}
 
 
 def _containers(doc: dict) -> list[dict]:
@@ -196,6 +234,254 @@ def check_isolation(r: Repo) -> list[str]:
     return errs
 
 
+def check_argocd(r: Repo) -> list[str]:
+    """ApplicationSet + AppProjects match the stages and ADR 0005's rules."""
+    errs = []
+    a = r.appset
+    if a is None:
+        return ["hub/argocd: no ApplicationSet"]
+    tmpl = a["spec"]["template"]
+    project = r.kargo_project["metadata"]["name"]
+    if not a["spec"].get("syncPolicy", {}).get("preserveResourcesOnDeletion"):
+        errs.append("ApplicationSet: syncPolicy.preserveResourcesOnDeletion must be true (ADR 0005 §5)")
+    if tmpl["metadata"].get("finalizers"):
+        errs.append("ApplicationSet template: no finalizers; deleting an Application must not cascade (ADR 0005 §5)")
+    want = {
+        "annotation": (tmpl["metadata"].get("annotations", {}).get("kargo.akuity.io/authorized-stage"),
+                       f"{project}:{{{{.stage}}}}"),
+        "name": (tmpl["metadata"].get("name"), "pantry-{{.layer}}-{{.stage}}"),
+        "project": (tmpl["spec"].get("project"), "pantry-{{.stage}}"),
+        "targetRevision": (tmpl["spec"]["source"].get("targetRevision"), "stage/{{.stage}}"),
+        "path": (tmpl["spec"]["source"].get("path"), "{{.layer}}"),
+        "repoURL": (tmpl["spec"]["source"].get("repoURL"), r.repo_url),
+    }
+    for what, (got, exp) in want.items():
+        if got != exp:
+            errs.append(f"ApplicationSet template {what}: {got!r} != {exp!r}")
+    if "CreateNamespace=true" in tmpl["spec"].get("syncPolicy", {}).get("syncOptions", []):
+        errs.append("ApplicationSet: no CreateNamespace; the infra layer owns namespaces")
+    if sorted(r.appset_layers()) != sorted(LAYERS):
+        errs.append(f"ApplicationSet layers {r.appset_layers()} != {list(LAYERS)}")
+    for e in r.appset_elements():
+        s = e["stage"]
+        if s not in r.params:
+            errs.append(f"ApplicationSet element {s!r} has no stages/{s}/params")
+            continue
+        for key in ("appNamespace", "dbNamespace"):
+            if e.get(key) != r.params[s][key]:
+                errs.append(f"ApplicationSet element {s}: {key} {e.get(key)!r} != params {r.params[s][key]!r}")
+    delivery = r.projects.get("pantry-delivery")
+    if delivery is None:
+        errs.append("no AppProject pantry-delivery for hub/kargo")
+    else:
+        allowed = {(w["group"], w["kind"]) for w in delivery["spec"].get("namespaceResourceWhitelist", []) +
+                   delivery["spec"].get("clusterResourceWhitelist", [])}
+        for d in r.kargo:
+            gk = (d["apiVersion"].split("/")[0] if "/" in d["apiVersion"] else "", d["kind"])
+            if gk not in allowed:
+                errs.append(f"hub/kargo {gk} not allowed by AppProject pantry-delivery")
+    for s in r.stage_names:
+        proj = r.projects.get(f"pantry-{s}")
+        if proj is None:
+            errs.append(f"{s}: no AppProject pantry-{s}")
+            continue
+        spec = proj["spec"]
+        if spec.get("sourceRepos") != [r.repo_url]:
+            errs.append(f"AppProject pantry-{s}: sourceRepos must be exactly [{r.repo_url}]")
+        dests = {(d.get("name"), d.get("namespace")) for d in spec.get("destinations", [])}
+        c = r.cluster_of(s)
+        want_dests = {(c, r.params[s]["appNamespace"]), (c, r.params[s]["dbNamespace"])}
+        if dests != want_dests:
+            errs.append(f"AppProject pantry-{s}: destinations {sorted(dests)} != {sorted(want_dests)}")
+        ns_kinds = {(w["group"], w["kind"]) for w in spec.get("namespaceResourceWhitelist", [])}
+        cl_kinds = {(w["group"], w["kind"]) for w in spec.get("clusterResourceWhitelist", [])}
+        for layer in LAYERS:
+            for d in r.rendered[s][layer]:
+                gk = (d["apiVersion"].split("/")[0] if "/" in d["apiVersion"] else "", d["kind"])
+                ns = d["metadata"].get("namespace")
+                if ns is None:
+                    if gk not in cl_kinds:
+                        errs.append(f"{s}: cluster-scoped {gk} not allowed by AppProject pantry-{s}")
+                else:
+                    if gk not in ns_kinds:
+                        errs.append(f"{s}: {gk} not in AppProject pantry-{s} namespaceResourceWhitelist")
+                    if ns not in {n for _, n in dests}:
+                        errs.append(f"{s}: {d['kind']}/{d['metadata']['name']} in namespace {ns!r} "
+                                    f"outside AppProject pantry-{s}")
+    return errs
+
+
+def _resolve(value, vars_: dict):
+    """Resolve a bare `${{ vars.<name> }}` reference against a task's vars."""
+    m = re.fullmatch(r"\$\{\{\s*vars\.(\w+)\s*\}\}", value or "")
+    return vars_.get(m.group(1)) if m else value
+
+
+def _step(task: dict, uses: str) -> list[dict]:
+    return [s for s in task["spec"]["steps"] if s.get("uses") == uses]
+
+
+def check_kargo(r: Repo) -> list[str]:
+    """Kargo pipeline is complete, consistent with Argo CD, and follows ADR 0002/0003/0005."""
+    errs = []
+    project = r.kargo_project["metadata"]["name"]
+    for d in r.kargo:
+        if d["kind"] != "Project" and d["metadata"].get("namespace") != project:
+            errs.append(f"{d['kind']}/{d['metadata']['name']} must live in namespace {project!r}")
+    pc = one(r.kargo, "ProjectConfig")
+    if pc is None or pc["metadata"]["name"] != project:
+        errs.append(f"ProjectConfig must exist and be named {project!r}")
+    # Warehouse
+    if r.repo_url is None:
+        errs.append("Warehouse: needs a git subscription to this repo (ADR 0002)")
+    else:
+        git = next(s["git"] for s in r.warehouse["spec"]["subscriptions"] if "git" in s)
+        inc = git.get("includePaths", [])
+        if git.get("branch") != "main" or sorted(inc) != ["base/", "stages/"]:
+            errs.append("Warehouse git subscription: branch main, includePaths exactly [base/, stages/] "
+                        "(hub/ changes must not create Freight)")
+    # Kargo CRD fields that have a server-side default but are REQUIRED by the
+    # schema (strict offline validation applies no defaults, and Kargo 1.6
+    # rejects their absence). Always set explicitly. strictSemvers only makes
+    # sense with SemVer selection; elsewhere it must be false (tags like
+    # dev-<sha> aren't semvers and would otherwise be filtered out).
+    for sub in (s["image"] for s in r.warehouse["spec"]["subscriptions"] if "image" in s):
+        repo = sub.get("repoURL")
+        for field in ("imageSelectionStrategy", "strictSemvers", "discoveryLimit"):
+            if field not in sub:
+                errs.append(f"Warehouse image {repo}: {field} must be set explicitly (required in Kargo 1.6)")
+        if "strictSemvers" in sub and not isinstance(sub["strictSemvers"], bool):
+            errs.append(f"Warehouse image {repo}: strictSemvers must be a boolean")
+        elif sub.get("strictSemvers") is True and sub.get("imageSelectionStrategy") != "SemVer":
+            errs.append(f"Warehouse image {repo}: strictSemvers: true only with imageSelectionStrategy SemVer")
+    if r.warehouse_images() != r.base_images():
+        errs.append(f"Warehouse images {sorted(r.warehouse_images())} != images deployed by base "
+                    f"{sorted(r.base_images())}")
+    # Stages
+    if set(r.stages) != set(r.stage_names):
+        errs.append(f"Kargo Stages {sorted(r.stages)} != stages/ dirs {r.stage_names}")
+    wh = r.warehouse["metadata"]["name"]
+    for name, st in r.stages.items():
+        for rf in st["spec"]["requestedFreight"]:
+            if rf["origin"] != {"kind": "Warehouse", "name": wh}:
+                errs.append(f"Stage {name}: origin must be Warehouse {wh!r}")
+            for up in rf["sources"].get("stages", []):
+                if up not in r.stages:
+                    errs.append(f"Stage {name}: unknown upstream stage {up!r}")
+        if r.task_of(name) is None:
+            errs.append(f"Stage {name}: must run exactly one known PromotionTask")
+    if "prod" in r.stages:
+        rf = r.stages["prod"]["spec"]["requestedFreight"][0]["sources"]
+        if rf.get("direct"):
+            errs.append("Stage prod: must never take Freight directly from the Warehouse")
+        t = r.task_of("prod")
+        if t is not None and not (_step(t, "git-open-pr") and _step(t, "git-wait-for-pr")):
+            errs.append("Stage prod: its task must open a PR and wait for the merge (ADR 0007)")
+    # Tasks
+    want_images = r.warehouse_images()
+    ref = None
+    for tname, t in r.tasks.items():
+        vars_ = {v["name"]: v.get("value") for v in t["spec"].get("vars", [])}
+        if vars_.get("repoURL") != r.repo_url:
+            errs.append(f"PromotionTask {tname}: var repoURL != {r.repo_url}")
+        ksi = _step(t, "kustomize-set-image")
+        if len(ksi) != 1 or ksi[0]["config"]["path"] != "./src/stages/${{ ctx.stage }}/apps":
+            errs.append(f"PromotionTask {tname}: exactly one kustomize-set-image on ./src/stages/${{{{ ctx.stage }}}}/apps")
+        else:
+            imgs = ksi[0]["config"]["images"]
+            if {i["image"] for i in imgs} != want_images:
+                errs.append(f"PromotionTask {tname}: kustomize-set-image images != Warehouse images")
+            for i in imgs:
+                if i.get("digest") != f'${{{{ imageFrom("{i["image"]}").Digest }}}}' or "tag" in i:
+                    errs.append(f"PromotionTask {tname}: {i['image']} must be pinned by its own digest (ADR 0003)")
+        builds = [(b["config"]["path"], b["config"]["outPath"]) for b in _step(t, "kustomize-build")]
+        want_builds = [(f"./src/stages/${{{{ ctx.stage }}}}/{layer}", f"./out/{layer}/manifests.yaml") for layer in LAYERS]
+        if builds != want_builds:
+            errs.append(f"PromotionTask {tname}: kustomize-build steps must render {list(LAYERS)} to ./out/<layer>/")
+        updates = _step(t, "argocd-update")
+        names = [a["name"] for u in updates for a in u["config"]["apps"]]
+        if names != [f"pantry-{layer}-${{{{ ctx.stage }}}}" for layer in LAYERS] or \
+                [len(u["config"]["apps"]) for u in updates] != [1, 1]:
+            errs.append(f"PromotionTask {tname}: argocd-update must sync infra then apps, one step each (ADR 0005 §4)")
+        for u in updates:
+            for a in u["config"]["apps"]:
+                for src in a.get("sources", []):
+                    if src.get("updateTargetRevision"):
+                        errs.append(f"PromotionTask {tname}: updateTargetRevision forbidden (ADR 0005 §2)")
+                    if not src.get("desiredRevision") or _resolve(src.get("repoURL"), vars_) != r.repo_url:
+                        errs.append(f"PromotionTask {tname}: argocd-update needs desiredRevision + repoURL {r.repo_url}")
+        render = [s for s in t["spec"]["steps"] if s.get("uses") in RENDER_STEP_USES]
+        if ref is None:
+            ref = (tname, render)
+        elif render != ref[1]:
+            errs.append(f"PromotionTask {tname}: render steps drifted from {ref[0]} (ADR 0002)")
+    return errs
+
+
+def check_cutover_state(r: Repo) -> list[str]:
+    """Stages not yet adopted by the hub can't be promoted into, so don't automate them."""
+    errs = []
+    adopted = r.adopted()
+    pending = set(r.stage_names) - adopted
+    pc = one(r.kargo, "ProjectConfig") or {"spec": {}}
+    for pol in pc["spec"].get("promotionPolicies", []):
+        st = pol.get("stageSelector", {}).get("name") or pol.get("stage")
+        if st in pending and pol.get("autoPromotionEnabled"):
+            errs.append(f"auto-promotion enabled for {st!r}, whose Applications don't exist yet "
+                        "(enable its ApplicationSet element first: KARGO-23)")
+    for name, st in r.stages.items():
+        srcs = st["spec"]["requestedFreight"][0]["sources"]
+        ups = srcs.get("stages", [])
+        if ups and any(u in pending for u in ups) and not srcs.get("direct"):
+            errs.append(f"Stage {name}: upstream {ups} not adopted yet, so it needs the interim direct: true")
+        if ups and not any(u in pending for u in ups) and srcs.get("direct"):
+            errs.append(f"Stage {name}: upstream {ups} is adopted; remove the interim direct: true")
+    return errs
+
+
+def check_rbac(r: Repo) -> list[str]:
+    """Only Pantry.ProdApprover can promote to prod; nobody edits the pipeline by hand (ADR 0007)."""
+    errs = []
+    sas = {d["metadata"]["name"]: d for d in by_kind(r.kargo, "ServiceAccount")}
+    roles = {d["metadata"]["name"]: d for d in by_kind(r.kargo, "Role")}
+    for rb in by_kind(r.kargo, "RoleBinding"):
+        role = roles.get(rb["roleRef"]["name"])
+        if role is None:
+            errs.append(f"RoleBinding {rb['metadata']['name']}: unknown Role")
+            continue
+        claims = set()
+        for subj in rb["subjects"]:
+            sa = sas.get(subj["name"])
+            claims |= set((ann(sa, "rbac.kargo.akuity.io/claim.roles") or "").split(",")) if sa else set()
+        for rule in role["rules"]:
+            verbs = set(rule["verbs"])
+            if "kargo.akuity.io" in rule["apiGroups"]:
+                if verbs & {"create", "update", "delete", "deletecollection", "*"}:
+                    errs.append(f"Role {role['metadata']['name']}: no write verbs on Kargo resources (pipeline is GitOps)")
+                if "patch" in verbs and (claims != {"Pantry.Oncall"} or
+                                         not set(rule["resources"]) <= ONCALL_PATCHABLE):
+                    errs.append(f"Role {role['metadata']['name']}: `patch` on Kargo resources is only for "
+                                f"Pantry.Oncall, on {sorted(ONCALL_PATCHABLE)} (refresh/reverify/abort)")
+            if "promote" in verbs:
+                names = set(rule.get("resourceNames", []))
+                if not names:
+                    errs.append(f"Role {role['metadata']['name']}: promote must be scoped by resourceNames")
+                if "prod" in names and claims != {"Pantry.ProdApprover"}:
+                    errs.append(f"Role {role['metadata']['name']}: prod promotion bound to {sorted(claims)}, "
+                                "only Pantry.ProdApprover allowed")
+    return errs
+
+
+def check_credentials(r: Repo) -> list[str]:
+    errs = []
+    creds = [e for e in by_kind(r.kargo, "ExternalSecret")
+             if e["spec"]["target"].get("template", {}).get("metadata", {}).get("labels", {})
+             .get("kargo.akuity.io/cred-type") == "git"]
+    if len(creds) != 1 or creds[0]["spec"]["target"]["template"]["data"].get("repoURL") != r.repo_url:
+        errs.append(f"exactly one git credential (ExternalSecret, cred-type git) for {r.repo_url}")
+    return errs
+
+
 # Fields allowed to differ between the live (legacy) tree and the rendered dev
 # stage: image pins move to Kargo, and the host is a per-stage placeholder.
 _LEGACY_ALLOWED = [
@@ -243,7 +529,8 @@ def check_legacy_equivalence(r: Repo) -> list[str]:
     return errs
 
 
-CHECKS = [check_stage_params, check_rendered, check_isolation, check_legacy_equivalence]
+CHECKS = [check_stage_params, check_rendered, check_isolation, check_argocd, check_kargo,
+          check_cutover_state, check_rbac, check_credentials, check_legacy_equivalence]
 
 
 def run(root: Path = REPO_ROOT, kustomize: str | None = None) -> dict[str, list[str]]:

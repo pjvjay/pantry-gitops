@@ -1,0 +1,69 @@
+# The pipeline: Warehouse -> dev -> staging -> prod.
+#
+# A Stage only accepts Freight from its `sources`. `stages: [x]` means
+# "Freight that was promoted to x and verified there". Verified = the
+# stage's Argo CD Applications reached the promoted commit and are Healthy.
+#
+# Each Stage syncs Argo CD Applications pantry-{infra,apps}-<stage>, which
+# carry `kargo.akuity.io/authorized-stage: pantry:<stage>` (ADR 0005).
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: dev
+  namespace: pantry
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: pantry
+      sources:
+        direct: true
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: render-and-push
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: staging
+  namespace: pantry
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: pantry
+      sources:
+        stages:
+          - dev
+        # INTERIM ONLY, until dev is adopted (KARGO-23): dev can't be promoted
+        # yet, so staging may also take Freight straight from the Warehouse.
+        # Remove at cutover; staging then only accepts Freight proven in dev.
+        # check_gitops.py fails CI if this remains after dev is adopted.
+        direct: true
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: render-and-push
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: prod
+  namespace: pantry
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: pantry
+      sources:
+        # Only Freight proven in staging. Never direct.
+        stages:
+          - staging
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: render-and-pr

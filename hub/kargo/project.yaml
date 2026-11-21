@@ -1,0 +1,30 @@
+# Kargo Project `pantry`. Cluster-scoped; Kargo creates and owns the
+# namespace `pantry`, where every other pipeline object lives.
+#
+# Prune=false,Delete=false: deleting a Kargo Project deletes its namespace,
+# and with it all Freight and Promotion history, i.e. the audit trail
+# of what ran where. Argo CD must never do that implicitly.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: pantry
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+---
+# Project-wide policy. Auto-promotion is the only policy in use (M3).
+# Soak time and verification gates arrive with M4 (KARGO-19/21).
+apiVersion: kargo.akuity.io/v1alpha1
+kind: ProjectConfig
+metadata:
+  name: pantry
+  namespace: pantry
+spec:
+  promotionPolicies:
+    # dev auto-promotes every new Freight: the target state. It stays OFF
+    # until dev is adopted (KARGO-23), because until then no Application
+    # pantry-*-dev exists for Kargo to sync (see hub/argocd/stages-appset.yaml).
+    # check_gitops.py fails CI if this is enabled while dev is pending.
+    - stageSelector:
+        name: dev
+      autoPromotionEnabled: false

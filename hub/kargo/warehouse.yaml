@@ -1,0 +1,55 @@
+# The Warehouse turns "something new exists" into Freight, the unit Kargo
+# promotes (ADR 0003). One Freight = one coherent release candidate:
+#   { pantry-api, pantry-frontend, pantry-db-migrate images, gitops commit }
+#
+# Images are PUBLIC on GHCR (no Deployment has imagePullSecrets), so no
+# registry credentials are needed. If that changes, add a
+# `kargo.akuity.io/cred-type: image` Secret the same way as credentials.yaml.
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: pantry
+  namespace: pantry
+spec:
+  # Poll interval. NewestBuild reads image metadata per candidate tag, so
+  # keep discoveryLimit small to stay well inside GHCR's rate limits.
+  interval: 5m0s
+  freightCreationPolicy: Automatic
+  subscriptions:
+    # Phase 1 (ADR 0003): the app repos' existing `dev-<sha7>` tags aren't
+    # orderable, so pick the newest BUILD. Phase 2 (KARGO-24) switches to
+    # SemVer once CI also pushes orderable tags. Promotions always pin the
+    # digest, never the tag.
+    #
+    # strictSemvers is a required field in Kargo 1.6 and must be set
+    # explicitly. `false` for NewestBuild: these tags aren't semvers at all.
+    # It becomes `true` only together with imageSelectionStrategy: SemVer.
+    # check_gitops.py enforces that pairing.
+    - image:
+        repoURL: ghcr.io/pjvjay/pantry-api
+        imageSelectionStrategy: NewestBuild
+        strictSemvers: false
+        allowTags: ^dev-[0-9a-f]{7}$
+        discoveryLimit: 10
+    - image:
+        repoURL: ghcr.io/pjvjay/pantry-frontend
+        imageSelectionStrategy: NewestBuild
+        strictSemvers: false
+        allowTags: ^dev-[0-9a-f]{7}$
+        discoveryLimit: 10
+    - image:
+        repoURL: ghcr.io/pjvjay/pantry-db-migrate
+        imageSelectionStrategy: NewestBuild
+        strictSemvers: false
+        allowTags: ^dev-[0-9a-f]{7}$
+        discoveryLimit: 10
+    # Manifest/config changes are Freight too (ADR 0002): a change to base/
+    # or stages/ is promoted dev -> staging -> prod like an image. Changes
+    # to hub/, docs/, scripts/ (and the legacy trees) create no Freight.
+    - git:
+        repoURL: https://github.com/pjvjay/pantry-gitops.git
+        branch: main
+        commitSelectionStrategy: NewestFromBranch
+        includePaths:
+          - base/
+          - stages/

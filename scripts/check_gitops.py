@@ -72,9 +72,24 @@ class Repo:
             for s in self.stage_names}
         self.rendered = {s: {layer: kustomize_build(kustomize, root / f"stages/{s}/{layer}") for layer in LAYERS}
                          for s in self.stage_names}
+        self.argocd = load_dir(root / "hub/argocd")
+        self.appset = one(self.argocd, "ApplicationSet")
+        self.projects = {p["metadata"]["name"]: p for p in by_kind(self.argocd, "AppProject")}
         self.legacy = None
         if (root / "apps/kustomization.yaml").exists() and (root / "infra").is_dir():
             self.legacy = kustomize_build(kustomize, root / "apps") + load_dir(root / "infra", recurse=True)
+
+    # ---- derived facts
+    def appset_elements(self) -> list[dict]:
+        stage_gen = self.appset["spec"]["generators"][0]["matrix"]["generators"][0]
+        return stage_gen["list"]["elements"]
+
+    def cluster_of(self, stage: str) -> str | None:
+        for e in self.appset_elements():
+            if e["stage"] == stage:
+                return e["cluster"]
+        names = {d.get("name") for d in self.projects.get(f"pantry-{stage}", {}).get("spec", {}).get("destinations", [])}
+        return names.pop() if len(names) == 1 else None
 
 
 def _containers(doc: dict) -> list[dict]:
@@ -155,6 +170,32 @@ def check_rendered(r: Repo) -> list[str]:
     return errs
 
 
+def check_isolation(r: Repo) -> list[str]:
+    """Stages sharing a cluster (and its Key Vault) must not collide (ADR 0001)."""
+    errs = []
+    by_cluster: dict[str, list[str]] = {}
+    for s in r.stage_names:
+        c = r.cluster_of(s)
+        if c is None:
+            errs.append(f"{s}: cannot determine cluster (ApplicationSet element or single-cluster AppProject)")
+            continue
+        by_cluster.setdefault(c, []).append(s)
+    for c, stages in by_cluster.items():
+        for i, a in enumerate(stages):
+            for b in stages[i + 1:]:
+                pa, pb = r.params[a], r.params[b]
+                shared = {pa["appNamespace"], pa["dbNamespace"]} & {pb["appNamespace"], pb["dbNamespace"]}
+                if shared:
+                    errs.append(f"{a}/{b} share cluster {c!r} and namespaces {sorted(shared)}")
+                for key in ("kvDbPasswordKey", "kvMcpTokensKey"):
+                    if pa[key] == pb[key]:
+                        errs.append(f"{a}/{b} share cluster {c!r} (one Key Vault) and {key} {pa[key]!r}")
+    hosts = [r.params[s]["host"] for s in r.stage_names]
+    if len(set(hosts)) != len(hosts):
+        errs.append(f"stage hosts must be unique: {hosts}")
+    return errs
+
+
 # Fields allowed to differ between the live (legacy) tree and the rendered dev
 # stage: image pins move to Kargo, and the host is a per-stage placeholder.
 _LEGACY_ALLOWED = [
@@ -202,7 +243,7 @@ def check_legacy_equivalence(r: Repo) -> list[str]:
     return errs
 
 
-CHECKS = [check_stage_params, check_rendered, check_legacy_equivalence]
+CHECKS = [check_stage_params, check_rendered, check_isolation, check_legacy_equivalence]
 
 
 def run(root: Path = REPO_ROOT, kustomize: str | None = None) -> dict[str, list[str]]:

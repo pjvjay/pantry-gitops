@@ -17,7 +17,7 @@ import check_gitops
 
 REPO = Path(__file__).resolve().parent.parent
 KUSTOMIZE = os.environ.get("KUSTOMIZE") or shutil.which("kustomize")
-COPY = ["base", "stages", "apps", "infra"]
+COPY = ["base", "stages", "hub", "apps", "infra"]
 
 
 @unittest.skipUnless(KUSTOMIZE, "kustomize not found")
@@ -46,6 +46,11 @@ class TestCheckGitops(unittest.TestCase):
         self.assertEqual({k: v for k, v in results.items() if v}, {})
 
     # ---- isolation (ADR 0001)
+    def test_staging_sharing_dev_key_vault_entry_is_caught(self):
+        self.edit("stages/staging/params/stage-params.yaml",
+                  "kvDbPasswordKey: pantry-staging-db-password", "kvDbPasswordKey: pantry-db-password")
+        self.assertCaught("check_isolation", "kvDbPasswordKey 'pantry-db-password'")
+
     def test_params_and_kustomization_namespace_drift_is_caught(self):
         self.edit("stages/staging/infra/db-ns/kustomization.yaml", "pantry-staging-db", "pantry-stg-db")
         self.assertCaught("check_stage_params", "stages/staging/infra/db-ns namespace")

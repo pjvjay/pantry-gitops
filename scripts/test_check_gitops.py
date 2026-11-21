@@ -114,13 +114,26 @@ class TestCheckGitops(unittest.TestCase):
                   "repoURL: ghcr.io/pjvjay/pantry-frontend-old")
         self.assertCaught("check_kargo", "Warehouse images")
 
+    # The image subscriptions are followed by allowTags, the git one by includePaths.
     def test_missing_strict_semvers_is_caught(self):
-        self.edit("hub/kargo/warehouse.yaml", "        strictSemvers: false\n", "", count=3)
-        self.assertCaught("check_kargo", "strictSemvers must be set explicitly")
+        self.edit("hub/kargo/warehouse.yaml", "        strictSemvers: false\n        allowTags", "        allowTags",
+                  count=3)
+        self.assertCaught("check_kargo", "Warehouse image ghcr.io/pjvjay/pantry-api: strictSemvers must be set explicitly")
+
+    def test_missing_strict_semvers_on_git_subscription_is_caught(self):
+        self.edit("hub/kargo/warehouse.yaml", "        strictSemvers: false\n        includePaths", "        includePaths")
+        self.assertCaught("check_kargo", "Warehouse git https://github.com/pjvjay/pantry-gitops.git: "
+                                         "strictSemvers must be set explicitly")
 
     def test_strict_semvers_with_newest_build_is_caught(self):
-        self.edit("hub/kargo/warehouse.yaml", "strictSemvers: false", "strictSemvers: true", count=3)
+        self.edit("hub/kargo/warehouse.yaml", "strictSemvers: false\n        allowTags",
+                  "strictSemvers: true\n        allowTags", count=3)
         self.assertCaught("check_kargo", "strictSemvers: true only with imageSelectionStrategy SemVer")
+
+    def test_strict_semvers_with_newest_from_branch_is_caught(self):
+        self.edit("hub/kargo/warehouse.yaml", "strictSemvers: false\n        includePaths",
+                  "strictSemvers: true\n        includePaths")
+        self.assertCaught("check_kargo", "strictSemvers: true only with commitSelectionStrategy SemVer")
 
     def test_hub_changes_creating_freight_is_caught(self):
         self.edit("hub/kargo/warehouse.yaml", "          - stages/\n", "          - stages/\n          - hub/\n")

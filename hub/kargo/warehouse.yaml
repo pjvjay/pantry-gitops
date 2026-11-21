@@ -46,10 +46,15 @@ spec:
     # Manifest/config changes are Freight too (ADR 0002): a change to base/
     # or stages/ is promoted dev -> staging -> prod like an image. Changes
     # to hub/, docs/, scripts/ (and the legacy trees) create no Freight.
+    #
+    # Kargo 1.6 requires strictSemvers on git subscriptions too. `false`
+    # here: NewestFromBranch follows a branch, not semver tags.
+    # check_gitops.py enforces it, as for the images.
     - git:
         repoURL: https://github.com/pjvjay/pantry-gitops.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        strictSemvers: false
         includePaths:
           - base/
           - stages/

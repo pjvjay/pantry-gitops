@@ -350,15 +350,20 @@ def check_kargo(r: Repo) -> list[str]:
     # rejects their absence). Always set explicitly. strictSemvers only makes
     # sense with SemVer selection; elsewhere it must be false (tags like
     # dev-<sha> aren't semvers and would otherwise be filtered out).
-    for sub in (s["image"] for s in r.warehouse["spec"]["subscriptions"] if "image" in s):
-        repo = sub.get("repoURL")
-        for field in ("imageSelectionStrategy", "strictSemvers", "discoveryLimit"):
-            if field not in sub:
-                errs.append(f"Warehouse image {repo}: {field} must be set explicitly (required in Kargo 1.6)")
-        if "strictSemvers" in sub and not isinstance(sub["strictSemvers"], bool):
-            errs.append(f"Warehouse image {repo}: strictSemvers must be a boolean")
-        elif sub.get("strictSemvers") is True and sub.get("imageSelectionStrategy") != "SemVer":
-            errs.append(f"Warehouse image {repo}: strictSemvers: true only with imageSelectionStrategy SemVer")
+    # Git subscriptions need strictSemvers just the same (the 1.6 CRD lists
+    # it as required for `git` as well as `image`), so both kinds are checked.
+    for kind, strategy, explicit in (
+            ("image", "imageSelectionStrategy", ("imageSelectionStrategy", "strictSemvers", "discoveryLimit")),
+            ("git", "commitSelectionStrategy", ("strictSemvers",))):
+        for sub in (s[kind] for s in r.warehouse["spec"]["subscriptions"] if kind in s):
+            repo = sub.get("repoURL")
+            for field in explicit:
+                if field not in sub:
+                    errs.append(f"Warehouse {kind} {repo}: {field} must be set explicitly (required in Kargo 1.6)")
+            if "strictSemvers" in sub and not isinstance(sub["strictSemvers"], bool):
+                errs.append(f"Warehouse {kind} {repo}: strictSemvers must be a boolean")
+            elif sub.get("strictSemvers") is True and sub.get(strategy) != "SemVer":
+                errs.append(f"Warehouse {kind} {repo}: strictSemvers: true only with {strategy} SemVer")
     if r.warehouse_images() != r.base_images():
         errs.append(f"Warehouse images {sorted(r.warehouse_images())} != images deployed by base "
                     f"{sorted(r.base_images())}")

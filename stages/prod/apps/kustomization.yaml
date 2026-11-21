@@ -10,5 +10,17 @@ namespace: pantry-app
 resources:
   - ../../../base/apps
   - ../params
+  # Prod hardening (KARGO-27)
+  - pdb.yaml
 components:
   - ../../../base/components/stage-params
+# `target` matches by kind+name whatever the base namespace is.
+patches:
+  - path: ha-api.yaml
+    target:
+      kind: Deployment
+      name: pantry-api
+  - path: ha-frontend.yaml
+    target:
+      kind: Deployment
+      name: pantry-frontend

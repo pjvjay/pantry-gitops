@@ -1,0 +1,16 @@
+# Prod-only workload HA for the frontend (see ha-api.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pantry-frontend
+spec:
+  replicas: 2
+  template:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: pantry-frontend

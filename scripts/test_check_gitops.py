@@ -218,6 +218,29 @@ class TestCheckGitops(unittest.TestCase):
         self.enable_provenance("staging.pantry.example.com")
         self.assertEqual(check_gitops.run(self.tmp, KUSTOMIZE)["check_verification"], [])
 
+    # ---- prod hardening (M6)
+    def test_prod_single_instance_is_caught(self):
+        self.edit("stages/prod/infra/db-ns/cluster-ha-backups.yaml", "  instances: 3\n", "  instances: 1\n")
+        self.assertCaught("check_prod_hardening", "instances >= 3")
+
+    def test_prod_without_pre_promotion_backup_is_caught(self):
+        self.edit("stages/prod/infra/db-ns/kustomization.yaml", "  - pre-promotion-backup.yaml\n", "")
+        self.assertCaught("check_prod_hardening", "pre-promotion Backup hook")
+
+    def test_pre_promotion_backup_before_cluster_exists_is_caught(self):
+        self.edit("stages/prod/infra/db-ns/pre-promotion-backup.yaml", 'sync-wave: "-4"', 'sync-wave: "-6"')
+        self.assertCaught("check_prod_hardening", "after its wave")
+
+    def test_prod_deployment_without_pdb_is_caught(self):
+        self.edit("stages/prod/apps/kustomization.yaml", "  - pdb.yaml\n", "")
+        self.assertCaught("check_prod_hardening", "Deployment/pantry-api has no PodDisruptionBudget")
+
+    def test_prod_hardening_never_leaks_into_dev(self):
+        # dev must stay identical to the live legacy Cluster while hardening prod.
+        results = check_gitops.run(self.tmp, KUSTOMIZE)
+        self.assertEqual(results["check_legacy_equivalence"], [])
+        self.assertEqual(results["check_prod_hardening"], [])
+
     # ---- RBAC (ADR 0007)
     def test_promoters_gaining_prod_is_caught(self):
         self.edit("hub/kargo/rbac.yaml", "resourceNames: [dev, staging]", "resourceNames: [dev, staging, prod]")

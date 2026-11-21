@@ -106,6 +106,13 @@ spec:
       kind: ExternalSecret
     - group: postgresql.cnpg.io
       kind: Cluster
+    # Prod hardening (KARGO-27)
+    - group: postgresql.cnpg.io
+      kind: Backup
+    - group: postgresql.cnpg.io
+      kind: ScheduledBackup
+    - group: policy
+      kind: PodDisruptionBudget
 ---
 # The delivery pipeline itself (Kargo resources), kept apart from the
 # workload projects so they stay least-privilege (ADR 0005 §6). Kargo's

@@ -483,6 +483,42 @@ def check_verification(r: Repo) -> list[str]:
     return errs
 
 
+def check_prod_hardening(r: Repo) -> list[str]:
+    """Prod runs HA with backups and a pre-promotion restore point (KARGO-27, ADR 0004)."""
+    if "prod" not in r.stage_names:
+        return []
+    errs = []
+    infra, apps = r.rendered["prod"]["infra"], r.rendered["prod"]["apps"]
+    cluster = one(infra, "Cluster")
+    name = cluster["metadata"]["name"] if cluster else None
+    if not cluster or cluster["spec"].get("instances", 1) < 3:
+        errs.append("prod: CNPG Cluster needs instances >= 3")
+    if not cluster or not cluster["spec"].get("backup", {}).get("barmanObjectStore") \
+            or not cluster["spec"]["backup"].get("retentionPolicy"):
+        errs.append("prod: CNPG Cluster needs backup.barmanObjectStore + retentionPolicy")
+    if not any(s["spec"]["cluster"]["name"] == name for s in by_kind(infra, "ScheduledBackup")):
+        errs.append("prod: needs a ScheduledBackup for the Cluster")
+    hooks = [b for b in by_kind(infra, "Backup") if ann(b, "argocd.argoproj.io/hook")]
+    cwave = int(ann(cluster, "argocd.argoproj.io/sync-wave") or 0) if cluster else 0
+    if len(hooks) != 1:
+        errs.append("prod: needs exactly one pre-promotion Backup hook in the infra layer")
+    else:
+        h = hooks[0]
+        wave = int(ann(h, "argocd.argoproj.io/sync-wave") or 0)
+        if ann(h, "argocd.argoproj.io/hook") != "Sync" or not (cwave < wave < 0) \
+                or h["spec"]["cluster"]["name"] != name:
+            errs.append("prod: pre-promotion Backup must be a Sync hook for the Cluster, after its wave "
+                        "and before the workloads (ADR 0004)")
+    pdbs = [d["spec"]["selector"].get("matchLabels", {}) for d in by_kind(apps, "PodDisruptionBudget")]
+    for d in by_kind(apps, "Deployment"):
+        if d["spec"].get("replicas", 1) < 2:
+            errs.append(f"prod: Deployment/{d['metadata']['name']} needs replicas >= 2")
+        labels = d["spec"]["template"]["metadata"]["labels"]
+        if not any(sel and all(labels.get(k) == v for k, v in sel.items()) for sel in pdbs):
+            errs.append(f"prod: Deployment/{d['metadata']['name']} has no PodDisruptionBudget")
+    return errs
+
+
 def check_cutover_state(r: Repo) -> list[str]:
     """Stages not yet adopted by the hub can't be promoted into, so don't automate them."""
     errs = []
@@ -595,7 +631,7 @@ def check_legacy_equivalence(r: Repo) -> list[str]:
 
 
 CHECKS = [check_stage_params, check_rendered, check_isolation, check_argocd, check_kargo,
-          check_verification, check_cutover_state, check_rbac, check_credentials, check_legacy_equivalence]
+          check_verification, check_prod_hardening, check_cutover_state, check_rbac, check_credentials, check_legacy_equivalence]
 
 
 def run(root: Path = REPO_ROOT, kustomize: str | None = None) -> dict[str, list[str]]:

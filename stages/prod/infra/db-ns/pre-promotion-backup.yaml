@@ -1,0 +1,28 @@
+# A fresh base backup on EVERY prod promotion, taken before the migration
+# can run (ADR 0004: rollback never rolls the schema back, so this backup
+# is the schema's break-glass restore point).
+#
+# How it gates:
+#   Kargo syncs pantry-infra-prod, then pantry-apps-prod (ADR 0005 §4).
+#   This is a Sync-phase hook at wave -4, just after the CNPG Cluster (-5),
+#   so it runs inside the infra sync. If the backup fails, the infra sync
+#   fails, the promotion fails, and the PreSync migration in the apps sync
+#   never starts.
+#   Argo CD waits on a non-Job hook's HEALTH, so the hub's argocd-cm needs
+#   the CNPG Backup health check in docs/handoffs/pantry-infra.md §11.
+#   Without it the hook would pass at once and gate nothing.
+#
+# BeforeHookCreation deletes the previous Backup OBJECT only. The backup
+# data stays in object storage under the retention policy.
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: pantry-pre-promotion
+  namespace: pantry-db
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  cluster:
+    name: pantry

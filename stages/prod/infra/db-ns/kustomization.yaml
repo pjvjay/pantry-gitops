@@ -4,5 +4,13 @@ namespace: pantry-db
 resources:
   - ../../../../base/infra/db-ns
   - ../../params
+  # Prod hardening (KARGO-27)
+  - scheduled-backup.yaml
+  - pre-promotion-backup.yaml
 components:
   - ../../../../base/components/stage-params
+patches:
+  - path: cluster-ha-backups.yaml
+    target:
+      kind: Cluster
+      name: pantry

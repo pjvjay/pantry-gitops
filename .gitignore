@@ -1,0 +1,6 @@
+# Local / CI artifacts (see .github/workflows/validate.yaml)
+rendered/
+schemas/
+.kargo-chart/
+.venv/
+__pycache__/
